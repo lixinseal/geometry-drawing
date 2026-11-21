@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta
+      name="description"
+      content="完全离线的参数化立体几何绘图与辅助线验证工具"
+    />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%2318232c'/%3E%3Cpath d='m18 22 14-8 14 8-14 8-14-8Zm0 0v20l14 8 14-8V22M18 22l14 8 14-8' fill='none' stroke='white' stroke-width='3'/%3E%3C/svg%3E"
+    />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./icons/apple-touch-icon-180.png" />
+    <meta name="theme-color" content="#0f766e" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="几何绘图" />
+    <title>几何绘图 · 本地离线版</title>
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <i data-lucide="box"></i>
+          </div>
+          <div>
+            <h1>几何绘图</h1>
+            <p>参数化立体构造 · 本地离线</p>
+          </div>
+        </div>
+
+        <div class="top-actions" aria-label="文件操作">
+          <button id="undo-btn" class="icon-btn" title="撤销 (Ctrl+Z)" type="button">
+            <i data-lucide="undo-2"></i>
+          </button>
+          <button id="redo-btn" class="icon-btn" title="重做 (Ctrl+Y)" type="button">
+            <i data-lucide="redo-2"></i>
+          </button>
+          <span class="action-separator"></span>
+          <button id="save-btn" class="action-btn" title="保存场景 JSON" type="button">
+            <i data-lucide="save"></i><span>保存</span>
+          </button>
+          <button id="load-btn" class="action-btn" title="打开场景 JSON" type="button">
+            <i data-lucide="folder-open"></i><span>打开</span>
+          </button>
+          <button id="export-btn" class="action-btn" title="导出 PNG" type="button">
+            <i data-lucide="image-down"></i><span>导出</span>
+          </button>
+          <input id="file-input" type="file" accept=".json,application/json" hidden />
+        </div>
+      </header>
+
+      <main class="workspace">
+        <aside class="panel shape-panel">
+          <section class="panel-section">
+            <div class="section-heading">
+              <div>
+                <span class="eyebrow">基础体</span>
+                <h2>创建几何体</h2>
+              </div>
+              <i data-lucide="shapes" aria-hidden="true"></i>
+            </div>
+
+            <label class="field">
+              <span>几何体类型</span>
+              <select id="shape-select">
+                <option value="cube">正方体</option>
+                <option value="cuboid">长方体</option>
+                <option value="tetra">正四面体</option>
+                <option value="triPyramid">正三棱锥</option>
+                <option value="quadPyramid">正四棱锥</option>
+                <option value="triPrism">正三棱柱</option>
+              </select>
+            </label>
+
+            <div id="parameter-fields" class="parameter-fields"></div>
+            <p id="shape-message" class="inline-message" role="status"></p>
+            <button id="create-shape-btn" class="primary-btn" type="button">
+              <i data-lucide="rotate-3d"></i>
+              生成图形
+            </button>
+          </section>
+
+          <section class="panel-section precise-section">
+            <div class="section-heading compact">
+              <div>
+                <span class="eyebrow">精确位置</span>
+                <h2>创建精确点</h2>
+              </div>
+              <i data-lucide="circle-plus" aria-hidden="true"></i>
+            </div>
+
+            <label class="field">
+              <span>定位方式</span>
+              <select id="point-mode">
+                <option value="edge">棱上定距</option>
+                <option value="coordinates">空间坐标</option>
+              </select>
+            </label>
+
+            <div id="edge-point-fields">
+              <label class="field">
+                <span>所在棱</span>
+                <select id="point-edge-select"></select>
+              </label>
+              <label class="field">
+                <span>距离起点</span>
+                <select id="point-anchor-select"></select>
+              </label>
+              <label class="field">
+                <span>距离</span>
+                <input id="point-distance" type="number" min="0" step="0.1" />
+              </label>
+              <p id="point-distance-hint" class="inline-message"></p>
+            </div>
+
+            <div id="coordinate-point-fields" hidden>
+              <div class="coordinate-grid">
+                <label class="field"><span>x</span><input id="point-x" type="number" step="0.1" /></label>
+                <label class="field"><span>y</span><input id="point-y" type="number" step="0.1" /></label>
+                <label class="field"><span>z</span><input id="point-z" type="number" step="0.1" /></label>
+              </div>
+            </div>
+
+            <button id="create-exact-point-btn" class="secondary-btn" type="button">
+              <i data-lucide="plus"></i>
+              创建精确点
+            </button>
+          </section>
+
+          <section class="panel-section property-section">
+            <div class="section-heading compact">
+              <div>
+                <span class="eyebrow">当前选择</span>
+                <h2 id="selection-title">未选择对象</h2>
+              </div>
+            </div>
+            <dl id="selection-details" class="details-list">
+              <div><dt>提示</dt><dd>点击图形中的点、棱或面</dd></div>
+            </dl>
+            <div id="color-editor" class="color-editor" hidden>
+              <div class="color-editor-heading">
+                <span>对象颜色</span>
+                <code id="color-value">#0f766e</code>
+              </div>
+              <div id="color-swatches" class="color-swatches" aria-label="预设颜色"></div>
+              <label class="custom-color">
+                <span>自定义颜色</span>
+                <input id="color-picker" type="color" value="#0f766e" />
+              </label>
+            </div>
+          </section>
+        </aside>
+
+        <section class="viewport-shell">
+          <div id="viewport" aria-label="三维立体几何画布"></div>
+          <div id="scene-title" class="scene-title"></div>
+          <div class="viewport-hint">
+            <i data-lucide="mouse-pointer-2"></i>
+            <span id="interaction-tip">左键旋转 · 右键平移 · 滚轮缩放</span>
+          </div>
+          <div id="hover-chip" class="hover-chip" hidden></div>
+          <button
+            id="reset-view-btn"
+            class="viewport-reset"
+            title="重新取景"
+            type="button"
+          >
+            <i data-lucide="rotate-ccw"></i>
+          </button>
+        </section>
+
+        <aside class="panel tools-panel">
+          <section class="panel-section">
+            <div class="section-heading compact">
+              <div>
+                <span class="eyebrow">构造</span>
+                <h2>辅助线工具</h2>
+              </div>
+            </div>
+            <div id="tool-grid" class="tool-grid" role="toolbar" aria-label="构造工具">
+              <button class="tool-btn active" data-tool="select" title="选择" type="button">
+                <i data-lucide="mouse-pointer-click"></i><span>选择</span>
+              </button>
+              <button class="tool-btn" data-tool="line" title="两点连线" type="button">
+                <i data-lucide="minus"></i><span>连线</span>
+              </button>
+              <button class="tool-btn" data-tool="point" title="任意位置添加点" type="button">
+                <i data-lucide="circle-plus"></i><span>自由点</span>
+              </button>
+              <button class="tool-btn" data-tool="midpoint" title="两点中点" type="button">
+                <i data-lucide="circle-dot"></i><span>中点</span>
+              </button>
+              <button class="tool-btn" data-tool="perpendicular" title="点到直线的垂足" type="button">
+                <i data-lucide="corner-down-right"></i><span>垂线</span>
+              </button>
+              <button class="tool-btn" data-tool="parallel" title="过点作平行线" type="button">
+                <i data-lucide="equal"></i><span>平行</span>
+              </button>
+              <button class="tool-btn" data-tool="plane" title="三点确定平面" type="button">
+                <i data-lucide="triangle"></i><span>平面</span>
+              </button>
+              <button class="tool-btn" data-tool="intersection" title="直线与平面交点" type="button">
+                <i data-lucide="crosshair"></i><span>交点</span>
+              </button>
+              <button class="tool-btn danger" data-tool="delete" title="删除选中对象" type="button">
+                <i data-lucide="trash-2"></i><span>删除</span>
+              </button>
+            </div>
+            <button id="finish-plane-btn" class="finish-plane-btn" type="button" hidden>
+              <i data-lucide="check"></i>
+              完成三点平面
+            </button>
+          </section>
+
+          <section class="panel-section measurement-tools-section">
+            <div class="section-heading compact">
+              <div>
+                <span class="eyebrow">测量</span>
+                <h2>测量工具</h2>
+              </div>
+              <i data-lucide="ruler" aria-hidden="true"></i>
+            </div>
+            <div id="measurement-tool-grid" class="tool-grid measurement-tool-grid" role="toolbar" aria-label="测量工具">
+              <button class="tool-btn" data-tool="measure-length" title="测量两点距离" type="button">
+                <i data-lucide="ruler"></i><span>长度</span>
+              </button>
+              <button class="tool-btn" data-tool="measure-angle" title="测量三点夹角" type="button">
+                <i data-lucide="angle"></i><span>角度</span>
+              </button>
+              <button class="tool-btn" data-tool="measure-edge-angle" title="通过顶点和两条棱测量夹角" type="button">
+                <i data-lucide="split"></i><span>两边角</span>
+              </button>
+            </div>
+          </section>
+
+          <section class="panel-section measurements-section">
+            <div class="section-heading compact">
+              <div>
+                <span class="eyebrow">测量</span>
+                <h2>计算结果</h2>
+              </div>
+              <span id="measurement-count" class="count-badge">0</span>
+            </div>
+            <p id="measurement-progress" class="measurement-progress" hidden></p>
+            <div id="measurement-list" class="measurement-list">
+              <p class="measurement-empty">选择长度或角度工具开始测量</p>
+            </div>
+          </section>
+
+          <section class="panel-section objects-section">
+            <div class="section-heading compact">
+              <div>
+                <span class="eyebrow">场景</span>
+                <h2>对象</h2>
+              </div>
+              <span id="object-count" class="count-badge">0</span>
+            </div>
+            <div id="object-list" class="object-list"></div>
+          </section>
+        </aside>
+      </main>
+
+      <footer class="statusbar">
+        <div class="status-main">
+          <span id="tool-status">选择工具</span>
+          <span class="status-separator"></span>
+          <span id="operation-status">点击点、棱或面开始操作</span>
+        </div>
+        <div class="status-runtime">
+          <span class="offline-dot"></span>
+          本地离线运行
+        </div>
+      </footer>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

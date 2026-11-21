@@ -1,0 +1,10 @@
+:8443 {
+  tls internal
+  root * ./dist
+  encode zstd gzip
+  file_server
+  try_files {path} /index.html
+
+  header /sw.js Cache-Control "no-cache"
+  header /manifest.webmanifest Cache-Control "no-cache"
+}
