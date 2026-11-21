@@ -4,6 +4,10 @@
 
 当前应用不包含云端、账号或 AI 解析，全部采用手动构建立体图形、辅助线、点和测量。
 
+正式在线地址：https://lixinseal.github.io/geometry-drawing/
+
+GitHub Actions 会在 `main` 分支更新后自动构建并发布 `dist/`。
+
 ## 目录
 
 - `src/`：应用源码。
@@ -60,9 +64,15 @@ dist/icons/apple-touch-icon-180.png
 
 详细证书步骤见 `deploy/README.md`。
 
-### 方案二：临时使用现成 HTTPS 静态托管
+### 方案二：GitHub Pages 在线托管
 
-把 `dist/` 上传到 GitHub Pages、Cloudflare Pages 或其他 HTTPS 静态站点即可。应用运行时不调用云端；托管只负责首次把文件送到 iPad。完成缓存后仍可断网使用。
+仓库已配置 GitHub Actions，并把 `dist/` 发布到：
+
+```text
+https://lixinseal.github.io/geometry-drawing/
+```
+
+应用运行时不调用云端；GitHub Pages 只负责首次把文件送到 iPad。完成缓存后仍可断网使用。
 
 ## 安装到 iPad 主屏幕
 
