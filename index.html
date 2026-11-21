@@ -56,12 +56,22 @@
         </div>
       </header>
 
-      <main class="workspace">
-        <aside class="panel shape-panel">
+      <main id="workspace" class="workspace">
+        <aside id="shape-panel" class="panel shape-panel">
+          <button
+            id="left-panel-toggle"
+            class="sidebar-toggle"
+            type="button"
+            aria-controls="shape-panel"
+            aria-expanded="true"
+            title="收起左侧菜单"
+          >
+            <i data-lucide="panel-left-close"></i>
+          </button>
+          <span id="sidebar-rail-label" class="sidebar-rail-label" hidden>菜单</span>
           <section class="panel-section">
             <div class="section-heading">
               <div>
-                <span class="eyebrow">基础体</span>
                 <h2>创建几何体</h2>
               </div>
               <i data-lucide="shapes" aria-hidden="true"></i>
@@ -90,7 +100,6 @@
           <section class="panel-section precise-section">
             <div class="section-heading compact">
               <div>
-                <span class="eyebrow">精确位置</span>
                 <h2>创建精确点</h2>
               </div>
               <i data-lucide="circle-plus" aria-hidden="true"></i>
@@ -137,7 +146,6 @@
           <section class="panel-section property-section">
             <div class="section-heading compact">
               <div>
-                <span class="eyebrow">当前选择</span>
                 <h2 id="selection-title">未选择对象</h2>
               </div>
             </div>
@@ -180,7 +188,6 @@
           <section class="panel-section">
             <div class="section-heading compact">
               <div>
-                <span class="eyebrow">构造</span>
                 <h2>辅助线工具</h2>
               </div>
             </div>
@@ -248,7 +255,6 @@
           <section class="panel-section measurement-tools-section">
             <div class="section-heading compact">
               <div>
-                <span class="eyebrow">测量</span>
                 <h2>测量工具</h2>
               </div>
               <i data-lucide="ruler" aria-hidden="true"></i>
@@ -269,7 +275,6 @@
           <section class="panel-section measurements-section">
             <div class="section-heading compact">
               <div>
-                <span class="eyebrow">测量</span>
                 <h2>计算结果</h2>
               </div>
               <span id="measurement-count" class="count-badge">0</span>
@@ -283,7 +288,6 @@
           <section class="panel-section objects-section">
             <div class="section-heading compact">
               <div>
-                <span class="eyebrow">场景</span>
                 <h2>对象</h2>
               </div>
               <span id="object-count" class="count-badge">0</span>

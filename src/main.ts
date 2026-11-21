@@ -16,6 +16,8 @@ import {
   MoveRight,
   MousePointer2,
   MousePointerClick,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   Redo2,
   Ruler,
@@ -82,6 +84,8 @@ const ICONS = {
   MoveRight,
   MousePointer2,
   MousePointerClick,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   Redo2,
   Ruler,
@@ -128,6 +132,7 @@ const TOOL_INSTRUCTIONS: Record<ToolKind, string> = {
 };
 
 const STORAGE_KEY = "geometry-drawing-offline-v1";
+const LEFT_PANEL_KEY = "geometry-drawing-left-panel-collapsed-v1";
 const CONSTRUCTION_COLORS = [
   "#0f766e",
   "#2563eb",
@@ -180,6 +185,12 @@ function faceArea(scene: SceneState, face: FaceEntity) {
 
 class GeometryApp {
   private readonly viewport = mustElement<HTMLDivElement>("viewport");
+  private readonly workspace = mustElement<HTMLElement>("workspace");
+  private readonly shapePanel = mustElement<HTMLElement>("shape-panel");
+  private readonly leftPanelToggle =
+    mustElement<HTMLButtonElement>("left-panel-toggle");
+  private readonly sidebarRailLabel =
+    mustElement<HTMLSpanElement>("sidebar-rail-label");
   private readonly shapeSelect =
     mustElement<HTMLSelectElement>("shape-select");
   private readonly parameterFields =
@@ -261,12 +272,14 @@ class GeometryApp {
   private rightPanStart: { x: number; y: number; pointerId: number } | null =
     null;
   private hoverFrame = 0;
+  private leftPanelScrollTop = 0;
 
   constructor() {
     this.renderer3d = new GeometryScene(this.viewport);
     this.sceneData = this.loadInitialScene();
     this.syncFormToScene();
     this.bindEvents();
+    this.restoreLeftPanelState();
     this.refreshAll(true);
     this.operationStatus.textContent = TOOL_INSTRUCTIONS.select;
     const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
@@ -323,7 +336,58 @@ class GeometryApp {
     return buildSolid("cube", { edge: 4 });
   }
 
+  private restoreLeftPanelState() {
+    let collapsed = false;
+    try {
+      collapsed = localStorage.getItem(LEFT_PANEL_KEY) === "1";
+    } catch {
+      collapsed = false;
+    }
+    this.setLeftPanelCollapsed(collapsed, false);
+  }
+
+  private setLeftPanelCollapsed(collapsed: boolean, persist = true) {
+    if (collapsed) {
+      this.leftPanelScrollTop = this.shapePanel.scrollTop;
+    }
+
+    this.workspace.classList.toggle("left-panel-collapsed", collapsed);
+    this.shapePanel.classList.toggle("collapsed", collapsed);
+    this.sidebarRailLabel.hidden = !collapsed;
+    this.leftPanelToggle.setAttribute(
+      "aria-expanded",
+      String(!collapsed)
+    );
+    this.leftPanelToggle.title = collapsed
+      ? "展开左侧菜单"
+      : "收起左侧菜单";
+    this.leftPanelToggle.innerHTML = icon(
+      collapsed ? "panel-left-open" : "panel-left-close"
+    );
+    refreshIcons();
+
+    if (persist) {
+      try {
+        localStorage.setItem(LEFT_PANEL_KEY, collapsed ? "1" : "0");
+      } catch {
+        // The layout state is non-critical if browser storage is unavailable.
+      }
+    }
+
+    if (!collapsed) {
+      requestAnimationFrame(() => {
+        this.shapePanel.scrollTop = this.leftPanelScrollTop;
+      });
+    }
+  }
+
   private bindEvents() {
+    this.leftPanelToggle.addEventListener("click", () => {
+      this.setLeftPanelCollapsed(
+        !this.shapePanel.classList.contains("collapsed")
+      );
+    });
+
     this.shapeSelect.addEventListener("change", () => {
       this.populateParameterFields();
       this.shapeMessage.textContent = "";
