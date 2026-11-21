@@ -1,5 +1,13 @@
 # iPad Air 3 首次部署与离线安装
 
+当前 GitHub Pages 地址：
+
+```text
+https://lixinseal.github.io/geometry-drawing/
+```
+
+GitHub Actions 会自动构建并发布。下面的 Caddy 内容是局域网 HTTPS 部署备选方案。
+
 ## 1. 构建
 
 ```powershell
