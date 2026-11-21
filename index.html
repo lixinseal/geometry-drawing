@@ -191,6 +191,9 @@
               <button class="tool-btn" data-tool="line" title="两点连线" type="button">
                 <i data-lucide="minus"></i><span>连线</span>
               </button>
+              <button class="tool-btn" data-tool="extend" title="延长现有线段" type="button">
+                <i data-lucide="move-right"></i><span>延长</span>
+              </button>
               <button class="tool-btn" data-tool="point" title="任意位置添加点" type="button">
                 <i data-lucide="circle-plus"></i><span>自由点</span>
               </button>
@@ -211,6 +214,29 @@
               </button>
               <button class="tool-btn danger" data-tool="delete" title="删除选中对象" type="button">
                 <i data-lucide="trash-2"></i><span>删除</span>
+              </button>
+            </div>
+            <div id="extension-controls" class="extension-controls" hidden>
+              <div class="extension-summary">
+                <span>当前线段</span>
+                <strong id="extension-source">未选择线段</strong>
+              </div>
+              <div class="extension-direction" role="group" aria-label="延长方向">
+                <button id="extension-endpoint-a" class="extension-direction-btn" type="button">
+                  从起点向外
+                </button>
+                <button id="extension-endpoint-b" class="extension-direction-btn active" type="button">
+                  从终点向外
+                </button>
+              </div>
+              <label class="field">
+                <span>延长长度</span>
+                <input id="extension-length" type="number" min="0.1" step="0.1" value="4" inputmode="decimal" />
+              </label>
+              <p id="extension-hint" class="inline-message"></p>
+              <button id="create-extension-btn" class="secondary-btn" type="button">
+                <i data-lucide="move-right"></i>
+                创建延长线
               </button>
             </div>
             <button id="finish-plane-btn" class="finish-plane-btn" type="button" hidden>

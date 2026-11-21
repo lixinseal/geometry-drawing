@@ -645,6 +645,63 @@ select:focus-visible {
   height: 16px;
 }
 
+.extension-controls {
+  margin-top: 13px;
+  padding-top: 13px;
+  border-top: 1px solid var(--line);
+}
+
+.extension-summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.extension-summary strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.extension-direction {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 7px;
+  margin: 10px 0;
+}
+
+.extension-direction-btn {
+  min-width: 0;
+  min-height: 40px;
+  padding: 5px 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.extension-direction-btn.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.extension-controls .field {
+  margin-bottom: 0;
+}
+
+.extension-controls .inline-message {
+  margin: 7px 0 10px;
+}
+
 .measurement-list {
   display: grid;
   gap: 6px;

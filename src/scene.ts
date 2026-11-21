@@ -48,6 +48,7 @@ export class GeometryScene {
   private readonly controls: OrbitControls;
   private readonly sceneRoot = new THREE.Group();
   private readonly snapRoot = new THREE.Group();
+  private readonly extensionPreviewRoot = new THREE.Group();
   private readonly pickTargets: PickTarget[] = [];
   private readonly lineMaterials: LineMaterial[] = [];
   private readonly raycaster = new THREE.Raycaster();
@@ -124,6 +125,7 @@ export class GeometryScene {
     this.scene.add(grid);
     this.scene.add(this.sceneRoot);
     this.scene.add(this.snapRoot);
+    this.scene.add(this.extensionPreviewRoot);
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(this.container);
@@ -133,6 +135,7 @@ export class GeometryScene {
 
   setScene(sceneData: SceneState, selectedIds: Set<string>, fit = false) {
     this.clearSnap();
+    this.clearExtensionPreview();
     this.currentScene = sceneData;
     this.selectedIds = selectedIds;
     this.rebuild();
@@ -148,6 +151,51 @@ export class GeometryScene {
     this.currentScene = sceneData;
     this.selectedIds = selectedIds;
     this.rebuild();
+    this.needsRender = true;
+  }
+
+  setExtensionPreview(start: Vec3 | null, end: Vec3 | null) {
+    this.clearExtensionPreview();
+    if (!start || !end) {
+      this.needsRender = true;
+      return;
+    }
+
+    const [a, b] = [start, end].map((value) => this.toThree(value));
+    const geometry = new LineGeometry();
+    geometry.setPositions([a.x, a.y, a.z, b.x, b.y, b.z]);
+    const material = new LineMaterial({
+      color: 0xe8742d,
+      linewidth: 3.2,
+      dashed: true,
+      dashSize: 0.2,
+      gapSize: 0.12,
+      alphaToCoverage: true,
+      transparent: true,
+      opacity: 0.95,
+      depthTest: false
+    });
+    material.resolution.set(
+      this.container.clientWidth,
+      this.container.clientHeight
+    );
+    const line = new Line2(geometry, material);
+    line.computeLineDistances();
+    line.renderOrder = 25;
+    this.extensionPreviewRoot.add(line);
+    this.needsRender = true;
+  }
+
+  clearExtensionPreview() {
+    this.extensionPreviewRoot.traverse((child) => {
+      if (child instanceof THREE.Line) {
+        child.geometry?.dispose();
+        const material = child.material;
+        if (Array.isArray(material)) material.forEach((item) => item.dispose());
+        else material?.dispose();
+      }
+    });
+    this.extensionPreviewRoot.clear();
     this.needsRender = true;
   }
 
@@ -788,6 +836,11 @@ export class GeometryScene {
     this.lineMaterials.forEach((material) =>
       material.resolution.set(width, height)
     );
+    this.extensionPreviewRoot.traverse((child) => {
+      if (child instanceof THREE.Line && child.material instanceof LineMaterial) {
+        child.material.resolution.set(width, height);
+      }
+    });
     this.needsRender = true;
   }
 

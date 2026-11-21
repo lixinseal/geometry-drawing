@@ -13,6 +13,7 @@ import {
   FolderOpen,
   ImageDown,
   Minus,
+  MoveRight,
   MousePointer2,
   MousePointerClick,
   Plus,
@@ -78,6 +79,7 @@ const ICONS = {
   FolderOpen,
   ImageDown,
   Minus,
+  MoveRight,
   MousePointer2,
   MousePointerClick,
   Plus,
@@ -97,6 +99,7 @@ const TOOL_LABELS: Record<ToolKind, string> = {
   select: "选择",
   point: "点",
   line: "连线",
+  extend: "延长线",
   midpoint: "中点",
   "measure-length": "长度测量",
   "measure-angle": "角度测量",
@@ -112,6 +115,7 @@ const TOOL_INSTRUCTIONS: Record<ToolKind, string> = {
   select: "点击点、棱或面查看对象信息",
   point: "点击面、棱或空白基准面添加任意点",
   line: "依次点击两个点创建辅助线段",
+  extend: "点击一条棱或辅助线段，再选择延长方向和长度",
   midpoint: "依次点击两个点，生成它们的中点",
   "measure-length": "依次点击两个点，计算它们之间的空间距离",
   "measure-angle": "依次点击：第一条边上的点 → 顶点 → 第二条边上的点",
@@ -204,6 +208,20 @@ class GeometryApp {
     mustElement<HTMLDivElement>("measurement-tool-grid");
   private readonly finishPlaneButton =
     mustElement<HTMLButtonElement>("finish-plane-btn");
+  private readonly extensionControls =
+    mustElement<HTMLDivElement>("extension-controls");
+  private readonly extensionSource =
+    mustElement<HTMLElement>("extension-source");
+  private readonly extensionEndpointA =
+    mustElement<HTMLButtonElement>("extension-endpoint-a");
+  private readonly extensionEndpointB =
+    mustElement<HTMLButtonElement>("extension-endpoint-b");
+  private readonly extensionLength =
+    mustElement<HTMLInputElement>("extension-length");
+  private readonly extensionHint =
+    mustElement<HTMLParagraphElement>("extension-hint");
+  private readonly createExtensionButton =
+    mustElement<HTMLButtonElement>("create-extension-btn");
   private readonly objectList = mustElement<HTMLDivElement>("object-list");
   private readonly measurementList =
     mustElement<HTMLDivElement>("measurement-list");
@@ -236,6 +254,7 @@ class GeometryApp {
   private selectedIds = new Set<string>();
   private activeTool: ToolKind = "select";
   private toolPicks: GeometryEntity[] = [];
+  private extensionEndpoint: "a" | "b" = "b";
   private history: SceneState[] = [];
   private future: SceneState[] = [];
   private pointerStart: { x: number; y: number } | null = null;
@@ -345,6 +364,18 @@ class GeometryApp {
         this.finishConstruction();
       }
     });
+    this.extensionEndpointA.addEventListener("click", () =>
+      this.setExtensionEndpoint("a")
+    );
+    this.extensionEndpointB.addEventListener("click", () =>
+      this.setExtensionEndpoint("b")
+    );
+    this.extensionLength.addEventListener("input", () =>
+      this.updateExtensionPreview()
+    );
+    this.createExtensionButton.addEventListener("click", () =>
+      this.createExtension()
+    );
 
     this.viewport.addEventListener("pointerdown", (event) => {
       if (event.button === 2) {
@@ -776,6 +807,8 @@ class GeometryApp {
 
   private setTool(tool: ToolKind) {
     this.activeTool = tool;
+    this.extensionEndpoint = "b";
+    this.renderer3d.clearExtensionPreview();
     this.clearToolPicks(false);
     document
       .querySelectorAll<HTMLButtonElement>("[data-tool]")
@@ -812,6 +845,15 @@ class GeometryApp {
       );
       this.selectedIds.clear();
       this.refreshAll();
+      return;
+    }
+
+    if (this.activeTool === "extend") {
+      if (entity.kind !== "edge") {
+        this.showToolError("延长线工具需要选择棱或辅助线段");
+        return;
+      }
+      this.selectExtensionEdge(entity);
       return;
     }
 
@@ -879,6 +921,7 @@ class GeometryApp {
   }
 
   private expectedKindForPick(): "point" | "edge" | "face" {
+    if (this.activeTool === "extend") return "edge";
     if (
       this.activeTool === "line" ||
       this.activeTool === "midpoint" ||
@@ -955,6 +998,174 @@ class GeometryApp {
       default:
         return "已选择第一个点，请选择第二个点";
     }
+  }
+
+  private extensionEdge(): EdgeEntity | null {
+    const candidate = this.toolPicks[0];
+    return this.activeTool === "extend" && candidate?.kind === "edge"
+      ? candidate
+      : null;
+  }
+
+  private selectExtensionEdge(edge: EdgeEntity) {
+    const start = findPoint(this.sceneData, edge.a);
+    const end = findPoint(this.sceneData, edge.b);
+    if (!start || !end || distance(start.pos, end.pos) < 1e-7) {
+      this.showToolError("所选线段长度无效，无法延长");
+      return;
+    }
+
+    this.toolPicks = [edge];
+    this.selectedIds = new Set([edge.id]);
+    this.extensionEndpoint = "b";
+    this.extensionSource.textContent = `${entityDisplayName(
+      this.sceneData,
+      edge
+    )} · ${round(distance(start.pos, end.pos), 3)}`;
+    this.extensionLength.value = round(distance(start.pos, end.pos), 3);
+    this.extensionEndpointA.textContent = `从 ${start.label} 向外`;
+    this.extensionEndpointB.textContent = `从 ${end.label} 向外`;
+    this.renderExtensionControls();
+    this.renderer3d.renderSelection(this.sceneData, this.selectedIds);
+    this.refreshSelection();
+    this.operationStatus.textContent =
+      "已选择线段，请选择延长端点并输入延长长度";
+  }
+
+  private setExtensionEndpoint(endpoint: "a" | "b") {
+    this.extensionEndpoint = endpoint;
+    this.renderExtensionControls();
+    const plan = this.extensionPlan();
+    if (plan) {
+      this.operationStatus.textContent = `将从点 ${plan.from.label} 向外延长`;
+    }
+  }
+
+  private extensionPlan() {
+    const edge = this.extensionEdge();
+    if (!edge) return null;
+
+    const endpointId =
+      this.extensionEndpoint === "a" ? edge.a : edge.b;
+    const otherId = this.extensionEndpoint === "a" ? edge.b : edge.a;
+    const from = findPoint(this.sceneData, endpointId);
+    const other = findPoint(this.sceneData, otherId);
+    const amount = Number(this.extensionLength.value);
+    if (!from || !other || !Number.isFinite(amount) || amount <= 0) {
+      return null;
+    }
+
+    const segmentLength = distance(from.pos, other.pos);
+    if (segmentLength < 1e-7) return null;
+    const ratio = amount / segmentLength;
+    const position: Vec3 = [
+      from.pos[0] + (from.pos[0] - other.pos[0]) * ratio,
+      from.pos[1] + (from.pos[1] - other.pos[1]) * ratio,
+      from.pos[2] + (from.pos[2] - other.pos[2]) * ratio
+    ];
+    return { edge, from, other, amount, position };
+  }
+
+  private renderExtensionControls() {
+    const edge = this.extensionEdge();
+    const active = this.activeTool === "extend" && Boolean(edge);
+    this.extensionControls.hidden = !active;
+    if (!edge || !active) {
+      this.renderer3d.clearExtensionPreview();
+      return;
+    }
+
+    this.extensionEndpointA.classList.toggle(
+      "active",
+      this.extensionEndpoint === "a"
+    );
+    this.extensionEndpointB.classList.toggle(
+      "active",
+      this.extensionEndpoint === "b"
+    );
+    this.extensionEndpointA.setAttribute(
+      "aria-pressed",
+      String(this.extensionEndpoint === "a")
+    );
+    this.extensionEndpointB.setAttribute(
+      "aria-pressed",
+      String(this.extensionEndpoint === "b")
+    );
+    this.updateExtensionPreview();
+  }
+
+  private updateExtensionPreview() {
+    const plan = this.extensionPlan();
+    if (!plan) {
+      this.renderer3d.clearExtensionPreview();
+      this.extensionHint.textContent = "请输入大于 0 的延长长度";
+      this.extensionHint.classList.add("error");
+      return;
+    }
+
+    this.extensionHint.classList.remove("error");
+    this.extensionHint.textContent = `从点 ${plan.from.label} 向外延长 ${round(
+      plan.amount,
+      3
+    )}，新线段将与原线段共线。`;
+    this.renderer3d.setExtensionPreview(plan.from.pos, plan.position);
+  }
+
+  private createExtension() {
+    const edge = this.extensionEdge();
+    if (!edge) {
+      this.showToolError("请先选择一条棱或辅助线段");
+      return;
+    }
+
+    const plan = this.extensionPlan();
+    if (!plan) {
+      this.showToolError("请输入大于 0 的有效延长长度");
+      return;
+    }
+
+    const existingPoint = this.sceneData.points.find(
+      (item) => distance(item.pos, plan.position) < 1e-7
+    );
+    const existingEdge = existingPoint
+      ? this.sceneData.edges.find(
+          (item) =>
+            (item.a === plan.from.id && item.b === existingPoint.id) ||
+            (item.a === existingPoint.id && item.b === plan.from.id)
+        )
+      : null;
+    if (existingEdge) {
+      this.selectedIds = new Set([existingEdge.id]);
+      this.showToolError("该位置已经存在相同的延长线");
+      return;
+    }
+
+    let createdEdgeId = "";
+    const color = edge.color || "#0f766e";
+    this.mutate(
+      (draft) => {
+        let endpoint = draft.points.find(
+          (item) => distance(item.pos, plan.position) < 1e-7
+        );
+        if (!endpoint) {
+          endpoint = makeAuxPoint(draft, plan.position);
+          endpoint.color = color;
+        }
+        createdEdgeId = makeAuxEdge(draft, plan.from.id, endpoint.id, {
+          dashed: true,
+          color
+        }).id;
+      },
+      `已从点 ${plan.from.label} 向外延长 ${round(plan.amount, 3)}`
+    );
+
+    this.selectedIds = new Set([createdEdgeId]);
+    this.clearToolPicks(false);
+    this.operationStatus.textContent = `已从点 ${plan.from.label} 向外延长 ${round(
+      plan.amount,
+      3
+    )}`;
+    this.refreshAll();
   }
 
   private finishConstruction() {
@@ -1251,6 +1462,7 @@ class GeometryApp {
     this.refreshPointEditor();
     this.renderMeasurements();
     this.renderObjectList();
+    this.renderExtensionControls();
     this.refreshSelection();
     this.undoButton.disabled = this.history.length === 0;
     this.redoButton.disabled = this.future.length === 0;
@@ -1495,6 +1707,7 @@ class GeometryApp {
     this.toolPicks = [];
     this.renderMeasurementProgress();
     this.updateFinishPlaneButton();
+    this.renderExtensionControls();
     if (refresh) this.refreshSelection();
   }
 

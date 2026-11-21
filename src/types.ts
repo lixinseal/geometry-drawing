@@ -12,6 +12,7 @@ export type ToolKind =
   | "select"
   | "point"
   | "line"
+  | "extend"
   | "midpoint"
   | "measure-length"
   | "measure-angle"
