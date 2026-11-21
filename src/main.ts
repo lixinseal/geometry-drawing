@@ -1120,7 +1120,9 @@ class GeometryApp {
 
     const plan = this.extensionPlan();
     if (!plan) {
-      this.showToolError("请输入大于 0 的有效延长长度");
+      this.operationStatus.textContent = "请输入大于 0 的有效延长长度";
+      this.extensionHint.textContent = "请输入大于 0 的延长长度";
+      this.extensionHint.classList.add("error");
       return;
     }
 
@@ -1136,7 +1138,8 @@ class GeometryApp {
       : null;
     if (existingEdge) {
       this.selectedIds = new Set([existingEdge.id]);
-      this.showToolError("该位置已经存在相同的延长线");
+      this.operationStatus.textContent = "该位置已经存在相同的延长线";
+      this.refreshSelection();
       return;
     }
 
