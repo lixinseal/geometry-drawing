@@ -100,6 +100,41 @@
             </button>
           </section>
 
+          <section class="panel-section composite-section">
+            <div class="section-heading compact">
+              <div>
+                <h2>组合几何体</h2>
+              </div>
+              <i data-lucide="box" aria-hidden="true"></i>
+            </div>
+
+            <label class="field">
+              <span>父几何体</span>
+              <select id="composite-host-select">
+                <option value="cube">正方体</option>
+                <option value="cuboid">长方体</option>
+                <option value="cylinder">圆柱</option>
+                <option value="cone">圆锥</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>球形关系</span>
+              <select id="composite-relation-select"></select>
+            </label>
+
+            <div id="composite-parameter-fields" class="parameter-fields"></div>
+            <dl id="composite-preview" class="details-list compact-details">
+              <div><dt>关系</dt><dd>选择模板后显示派生结果</dd></div>
+            </dl>
+            <p id="composite-message" class="inline-message" role="status"></p>
+            <button id="create-composite-btn" class="secondary-btn" type="button">
+              <i data-lucide="plus"></i>
+              生成组合体
+            </button>
+            <p class="inline-message">更新父参数会按关系重新计算球体，并重置当前辅助构造。</p>
+          </section>
+
           <section class="panel-section precise-section">
             <div class="section-heading compact">
               <div>
@@ -154,6 +189,10 @@
             </div>
 
             <div id="surface-point-fields" hidden>
+              <label class="field">
+                <span>所在曲面</span>
+                <select id="point-surface-select"></select>
+              </label>
               <label class="field">
                 <span id="surface-angle-label">方位角（°）</span>
                 <input id="point-surface-angle" type="number" step="1" value="0" />
@@ -251,6 +290,9 @@
               </button>
               <button class="tool-btn" data-tool="plane" title="三点确定平面" type="button">
                 <i data-lucide="triangle"></i><span>平面</span>
+              </button>
+              <button class="tool-btn" data-tool="section" title="三点作多面体截面并计算球截面" type="button">
+                <i data-lucide="circle-dot"></i><span>截面</span>
               </button>
               <button class="tool-btn" data-tool="intersection" title="直线与平面交点" type="button">
                 <i data-lucide="crosshair"></i><span>交点</span>
