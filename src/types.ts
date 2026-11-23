@@ -11,6 +11,41 @@ export type ShapeKind =
   | "cone"
   | "sphere";
 
+export type CompositeHostKind = "cube" | "cuboid" | "cylinder" | "cone";
+
+export type CompositeRelationKind =
+  | "cube-face-sphere"
+  | "cube-edge-sphere"
+  | "cube-circumsphere"
+  | "cuboid-circumsphere"
+  | "cylinder-insphere"
+  | "cylinder-circumsphere"
+  | "cone-insphere"
+  | "cone-circumsphere";
+
+export interface CompositeMetric {
+  key: string;
+  label: string;
+  value: number;
+  suffix?: string;
+}
+
+export interface CompositeEntity {
+  kind: "composite";
+  id: string;
+  hostShape: CompositeHostKind;
+  hostParams: Record<string, number>;
+  relation: CompositeRelationKind;
+  label: string;
+  description: string;
+  sphereSurfaceId: string;
+  sphereCenter: Vec3;
+  sphereRadius: number;
+  contactPointIds: string[];
+  contactCurveIds: string[];
+  metrics: CompositeMetric[];
+}
+
 export type ToolKind =
   | "select"
   | "point"
@@ -23,6 +58,7 @@ export type ToolKind =
   | "perpendicular"
   | "parallel"
   | "plane"
+  | "section"
   | "intersection"
   | "delete";
 
@@ -35,6 +71,7 @@ export interface PointEntity {
   base: boolean;
   auxiliary: boolean;
   internal?: boolean;
+  contact?: boolean;
   color?: string;
   constraint?:
     | {
@@ -122,18 +159,23 @@ export interface SurfaceEntity {
   label: string;
   visible: boolean;
   auxiliary: boolean;
+  center: Vec3;
+  radius: number;
+  height?: number;
+  role?: "host" | "child";
   color?: string;
 }
 
 export interface MeasurementEntity {
   kind: "measurement";
   id: string;
-  type: "length" | "angle";
+  type: "length" | "angle" | "relation";
   points: string[];
   value: number;
   label: string;
   visible: boolean;
   color: string;
+  locked?: boolean;
 }
 
 export type GeometryEntity =
@@ -141,7 +183,8 @@ export type GeometryEntity =
   | EdgeEntity
   | FaceEntity
   | CurveEntity
-  | SurfaceEntity;
+  | SurfaceEntity
+  | CompositeEntity;
 
 export interface SceneState {
   version: 1;
@@ -153,6 +196,7 @@ export interface SceneState {
   faces: FaceEntity[];
   curves: CurveEntity[];
   surfaces: SurfaceEntity[];
+  composites?: CompositeEntity[];
   measurements?: MeasurementEntity[];
   nextId: number;
 }
