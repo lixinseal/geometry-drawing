@@ -9,32 +9,39 @@ import { LineGeometry } from "three/addons/lines/LineGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import {
   entityDisplayName,
+  findCurve,
   findEdge,
   findFace,
   findPoint,
+  findSurface,
   getEdgePositions,
+  getCirclePositions,
   getFacePositions,
+  projectPointToSurface,
+  sceneBoundsPoints,
   toThreePoint
 } from "./geometry";
 import type {
+  CurveEntity,
   EdgeEntity,
   FaceEntity,
   GeometryEntity,
   MeasurementEntity,
   PointEntity,
   SceneState,
+  SurfaceEntity,
   Vec3
 } from "./types";
 
 interface PickTarget {
   entityId: string;
-  entityKind: "point" | "edge" | "face";
+  entityKind: "point" | "edge" | "curve" | "face" | "surface";
   object: THREE.Object3D;
 }
 
 export interface SnapResult {
   entity: GeometryEntity;
-  kind: "point" | "edge";
+  kind: "point" | "edge" | "curve";
   position: Vec3;
   screen: { x: number; y: number };
 }
@@ -201,13 +208,11 @@ export class GeometryScene {
 
   fitCamera() {
     if (!this.currentScene) return;
-    const visiblePoints = this.currentScene.points.filter(
-      (item) => item.visible
-    );
-    if (!visiblePoints.length) return;
+    const boundsPoints = sceneBoundsPoints(this.currentScene);
+    if (!boundsPoints.length) return;
     const box = new THREE.Box3();
-    visiblePoints.forEach((item) => {
-      box.expandByPoint(this.toThree(item.pos));
+    boundsPoints.forEach((position) => {
+      box.expandByPoint(this.toThree(position));
     });
     if (box.isEmpty()) return;
 
@@ -267,7 +272,11 @@ export class GeometryScene {
     this.raycaster.setFromCamera(this.pointer, this.camera);
     this.raycaster.params.Line = { threshold: 0.09 };
 
-    const priority: Array<"point" | "edge"> = ["point", "edge"];
+    const priority: Array<"point" | "edge" | "curve"> = [
+      "point",
+      "edge",
+      "curve"
+    ];
     for (const kind of priority) {
       const targets = this.pickTargets.filter(
         (target) => target.entityKind === kind
@@ -287,13 +296,14 @@ export class GeometryScene {
     }
 
     const faceTargets = this.pickTargets.filter(
-      (target) => target.entityKind === "face"
+      (target) =>
+        target.entityKind === "face" || target.entityKind === "surface"
     );
     const auxiliaryTargets = faceTargets.filter((target) => {
       const face = this.currentScene
         ? findFace(this.currentScene, target.entityId)
         : null;
-      return face?.auxiliary;
+      return target.entityKind === "face" && face?.auxiliary;
     });
     const baseTargets = faceTargets.filter(
       (target) => !auxiliaryTargets.includes(target)
@@ -385,7 +395,30 @@ export class GeometryScene {
         };
       }
     }
-    return bestEdge;
+    if (bestEdge) return bestEdge;
+
+    let bestCurve: SnapResult | null = null;
+    let curveDistance = 16;
+    for (const item of this.currentScene.curves) {
+      if (!item.visible) continue;
+      for (const position of getCirclePositions(item, 160)) {
+        const screen = this.projectToScreen(this.toThree(position));
+        const currentDistance = Math.hypot(
+          localX - screen.x,
+          localY - screen.y
+        );
+        if (currentDistance < curveDistance) {
+          curveDistance = currentDistance;
+          bestCurve = {
+            entity: item,
+            kind: "curve",
+            position,
+            screen
+          };
+        }
+      }
+    }
+    return bestCurve;
   }
 
   showSnap(snap: SnapResult | null) {
@@ -394,23 +427,29 @@ export class GeometryScene {
     const span = this.modelSpan();
     const world = this.toThree(snap.position);
 
-    if (snap.kind === "edge") {
-      const edge = findEdge(this.currentScene!, snap.entity.id);
-      if (edge) {
-        const positions = getEdgePositions(this.currentScene!, edge);
-        if (positions) {
-          const [start, end] = positions.map((position) =>
-            this.toThree(position)
-          );
+    if (snap.kind === "edge" || snap.kind === "curve") {
+      const positions =
+        snap.kind === "edge"
+          ? (() => {
+              const edge = findEdge(this.currentScene!, snap.entity.id);
+              const endpoints = edge
+                ? getEdgePositions(this.currentScene!, edge)
+                : null;
+              return endpoints?.map((position) => this.toThree(position)) ?? null;
+            })()
+          : (() => {
+              const curve = findCurve(this.currentScene!, snap.entity.id);
+              return curve
+                ? getCirclePositions(curve, 96).map((position) =>
+                    this.toThree(position)
+                  )
+                : null;
+            })();
+      if (positions && positions.length >= 2) {
           const geometry = new LineGeometry();
-          geometry.setPositions([
-            start.x,
-            start.y,
-            start.z,
-            end.x,
-            end.y,
-            end.z
-          ]);
+          geometry.setPositions(
+            positions.flatMap((position) => [position.x, position.y, position.z])
+          );
           const material = new LineMaterial({
             color: 0xe8742d,
             linewidth: 4.5,
@@ -426,7 +465,6 @@ export class GeometryScene {
           const line = new Line2(geometry, material);
           line.renderOrder = 30;
           this.snapRoot.add(line);
-        }
       }
     }
 
@@ -502,13 +540,34 @@ export class GeometryScene {
     }
 
     const faceTargets = this.pickTargets.filter(
-      (target) => target.entityKind === "face"
+      (target) =>
+        target.entityKind === "face" || target.entityKind === "surface"
     );
     const faceHit = this.raycaster.intersectObjects(
       faceTargets.map((target) => target.object),
       false
     )[0];
     if (faceHit) {
+      const target = faceTargets.find((item) => item.object === faceHit.object);
+      if (target?.entityKind === "surface") {
+        const surfaceEntity = findSurface(
+          this.currentScene,
+          target.entityId
+        );
+        const position = surfaceEntity
+          ? projectPointToSurface(
+              this.currentScene,
+              surfaceEntity,
+              this.fromThree(faceHit.point)
+            )
+          : null;
+        if (position) {
+          return {
+            kind: "surface" as const,
+            position
+          };
+        }
+      }
       return {
         kind: "face" as const,
         position: this.fromThree(faceHit.point)
@@ -549,7 +608,7 @@ export class GeometryScene {
         world = this.toThree(positions[0]).add(this.toThree(positions[1]));
         world.multiplyScalar(0.5);
       }
-    } else {
+    } else if (entity.kind === "face") {
       const positions = getFacePositions(this.currentScene, entity);
       if (positions.length) {
         world = positions
@@ -557,6 +616,15 @@ export class GeometryScene {
           .reduce((sum, position) => sum.add(position), new THREE.Vector3())
           .multiplyScalar(1 / positions.length);
       }
+    } else if (entity.kind === "curve") {
+      world = this.toThree(entity.center);
+    } else if (entity.kind === "surface") {
+      const height =
+        this.currentScene.shape === "cylinder" ||
+        this.currentScene.shape === "cone"
+          ? this.currentScene.params.height
+          : 0;
+      world = this.toThree([0, 0, height / 2]);
     }
 
     if (!world) return null;
@@ -579,6 +647,8 @@ export class GeometryScene {
       findPoint(this.currentScene, id) ||
       findEdge(this.currentScene, id) ||
       findFace(this.currentScene, id) ||
+      findCurve(this.currentScene, id) ||
+      findSurface(this.currentScene, id) ||
       null
     );
   }
@@ -594,9 +664,15 @@ export class GeometryScene {
   private rebuild() {
     this.clearRoot();
     if (!this.currentScene) return;
+    this.currentScene.surfaces
+      .filter((item) => item.visible)
+      .forEach((item) => this.buildSurface(item));
     this.currentScene.faces
       .filter((item) => item.visible)
       .forEach((item) => this.buildFace(item));
+    this.currentScene.curves
+      .filter((item) => item.visible)
+      .forEach((item) => this.buildCurve(item));
     this.currentScene.edges
       .filter((item) => item.visible)
       .forEach((item) => this.buildEdge(item));
@@ -676,6 +752,81 @@ export class GeometryScene {
     label.position.copy(sphere.position);
     label.position.y += Math.max(0.1, radius * 2.6);
     this.sceneRoot.add(label);
+  }
+
+  private buildCurve(item: CurveEntity) {
+    const points = getCirclePositions(item, 160).map((position) =>
+      this.toThree(position)
+    );
+    const geometry = new LineGeometry();
+    geometry.setPositions(
+      points.flatMap((position) => [position.x, position.y, position.z])
+    );
+    const selected = this.selectedIds.has(item.id);
+    const material = new LineMaterial({
+      color: new THREE.Color(
+        item.color || (selected ? "#e8742d" : "#2a6f79")
+      ),
+      linewidth: selected ? 4 : 2.2,
+      dashed: item.dashed ?? false,
+      dashSize: 0.16,
+      gapSize: 0.1,
+      alphaToCoverage: true
+    });
+    material.resolution.set(
+      this.container.clientWidth,
+      this.container.clientHeight
+    );
+    this.lineMaterials.push(material);
+    const line = new Line2(geometry, material);
+    if (item.dashed) line.computeLineDistances();
+    line.renderOrder = selected ? 18 : 11;
+    line.userData = { entityId: item.id, entityKind: "curve" };
+    this.sceneRoot.add(line);
+    this.pickTargets.push({
+      entityId: item.id,
+      entityKind: "curve",
+      object: line
+    });
+  }
+
+  private buildSurface(item: SurfaceEntity) {
+    if (!this.currentScene) return;
+    const radius = this.currentScene.params.radius;
+    const height = this.currentScene.params.height;
+    let geometry: THREE.BufferGeometry;
+    let centerY = 0;
+    if (item.surfaceType === "cylinder") {
+      geometry = new THREE.CylinderGeometry(radius, radius, height, 64, 1, false);
+      centerY = height / 2;
+    } else if (item.surfaceType === "cone") {
+      geometry = new THREE.ConeGeometry(radius, height, 64, 1, false);
+      centerY = height / 2;
+    } else {
+      geometry = new THREE.SphereGeometry(radius, 64, 40);
+    }
+    const selected = this.selectedIds.has(item.id);
+    const material = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(
+        item.color || (selected ? "#e8742d" : "#7fa8b2")
+      ),
+      transparent: true,
+      opacity: selected ? 0.28 : 0.13,
+      roughness: 0.82,
+      metalness: 0,
+      depthWrite: false,
+      side: THREE.DoubleSide
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.y = centerY;
+    mesh.renderOrder = selected ? 9 : 2;
+    mesh.userData = { entityId: item.id, entityKind: "surface" };
+    this.sceneRoot.add(mesh);
+    this.pickTargets.push({
+      entityId: item.id,
+      entityKind: "surface",
+      object: mesh
+    });
   }
 
   private buildEdge(item: EdgeEntity) {
@@ -817,10 +968,12 @@ export class GeometryScene {
   }
 
   private modelSpan() {
-    if (!this.currentScene?.points.length) return 4;
+    if (!this.currentScene) return 4;
+    const points = sceneBoundsPoints(this.currentScene);
+    if (!points.length) return 4;
     const box = new THREE.Box3();
-    this.currentScene.points.forEach((item) => {
-      box.expandByPoint(this.toThree(item.pos));
+    points.forEach((position) => {
+      box.expandByPoint(this.toThree(position));
     });
     const size = box.getSize(new THREE.Vector3());
     return Math.max(size.x, size.y, size.z, 2);
