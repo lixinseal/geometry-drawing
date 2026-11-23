@@ -1,10 +1,13 @@
 import type {
+  CurveEntity,
   EdgeEntity,
   FaceEntity,
+  GeometryEntity,
   PointEntity,
   SceneState,
   ShapeDefinition,
   ShapeKind,
+  SurfaceEntity,
   Vec3
 } from "./types";
 
@@ -53,6 +56,27 @@ export const SHAPES: Record<ShapeKind, ShapeDefinition> = {
       { key: "base", label: "底边 a", defaultValue: 4 },
       { key: "height", label: "棱柱高 h", defaultValue: 5 }
     ]
+  },
+  cylinder: {
+    label: "圆柱",
+    description: "竖直轴线，底面位于基准面",
+    fields: [
+      { key: "radius", label: "底面半径 r", defaultValue: 2.5 },
+      { key: "height", label: "高 h", defaultValue: 5 }
+    ]
+  },
+  cone: {
+    label: "圆锥",
+    description: "竖直轴线，顶点位于底面正上方",
+    fields: [
+      { key: "radius", label: "底面半径 r", defaultValue: 2.5 },
+      { key: "height", label: "高 h", defaultValue: 5 }
+    ]
+  },
+  sphere: {
+    label: "球体",
+    description: "球心位于坐标原点",
+    fields: [{ key: "radius", label: "半径 r", defaultValue: 3 }]
   }
 };
 
@@ -159,13 +183,51 @@ function face(
   };
 }
 
+function curve(
+  id: string,
+  center: Vec3,
+  radius: number,
+  label: string,
+  options: Partial<CurveEntity> = {}
+): CurveEntity {
+  return {
+    kind: "curve",
+    id,
+    curveType: "circle",
+    center,
+    normal: [0, 0, 1],
+    radius,
+    label,
+    visible: true,
+    auxiliary: false,
+    ...options
+  };
+}
+
+function surface(
+  id: string,
+  surfaceType: SurfaceEntity["surfaceType"],
+  label: string
+): SurfaceEntity {
+  return {
+    kind: "surface",
+    id,
+    surfaceType,
+    label,
+    visible: true,
+    auxiliary: false
+  };
+}
+
 function scene(
   title: string,
   shape: ShapeKind,
   params: Record<string, number>,
   points: PointEntity[],
   edges: EdgeEntity[],
-  faces: FaceEntity[]
+  faces: FaceEntity[],
+  curves: CurveEntity[] = [],
+  surfaces: SurfaceEntity[] = []
 ): SceneState {
   return {
     version: 1,
@@ -175,6 +237,8 @@ function scene(
     points,
     edges,
     faces,
+    curves,
+    surfaces,
     measurements: [],
     nextId: 1
   };
@@ -361,45 +425,131 @@ export function buildSolid(
     );
   }
 
-  validatePositive(params, ["base", "height"]);
-  const a = params.base;
-  const height = params.height;
-  const radius = a / Math.sqrt(3);
-  const base = [
-    point("A", "A", [radius, 0, 0]),
-    point("B", "B", [-radius / 2, a / 2, 0]),
-    point("C", "C", [-radius / 2, -a / 2, 0])
-  ];
-  const top = [
-    point("A1", "A₁", [radius, 0, height]),
-    point("B1", "B₁", [-radius / 2, a / 2, height]),
-    point("C1", "C₁", [-radius / 2, -a / 2, height])
-  ];
-  const edges = [
-    edge("AB", "A", "B"),
-    edge("BC", "B", "C"),
-    edge("CA", "C", "A"),
-    edge("A1B1", "A1", "B1"),
-    edge("B1C1", "B1", "C1"),
-    edge("C1A1", "C1", "A1"),
-    edge("AA1", "A", "A1"),
-    edge("BB1", "B", "B1"),
-    edge("CC1", "C", "C1")
-  ];
-  const faces = [
-    face("ABC", ["A", "B", "C"]),
-    face("A1B1C1", ["A1", "B1", "C1"]),
-    face("ABB1A1", ["A", "B", "B1", "A1"]),
-    face("BCC1B1", ["B", "C", "C1", "B1"]),
-    face("CAA1C1", ["C", "A", "A1", "C1"])
-  ];
+  if (shape === "triPrism") {
+    validatePositive(params, ["base", "height"]);
+    const a = params.base;
+    const height = params.height;
+    const radius = a / Math.sqrt(3);
+    const base = [
+      point("A", "A", [radius, 0, 0]),
+      point("B", "B", [-radius / 2, a / 2, 0]),
+      point("C", "C", [-radius / 2, -a / 2, 0])
+    ];
+    const top = [
+      point("A1", "A₁", [radius, 0, height]),
+      point("B1", "B₁", [-radius / 2, a / 2, height]),
+      point("C1", "C₁", [-radius / 2, -a / 2, height])
+    ];
+    const edges = [
+      edge("AB", "A", "B"),
+      edge("BC", "B", "C"),
+      edge("CA", "C", "A"),
+      edge("A1B1", "A1", "B1"),
+      edge("B1C1", "B1", "C1"),
+      edge("C1A1", "C1", "A1"),
+      edge("AA1", "A", "A1"),
+      edge("BB1", "B", "B1"),
+      edge("CC1", "C", "C1")
+    ];
+    const faces = [
+      face("ABC", ["A", "B", "C"]),
+      face("A1B1C1", ["A1", "B1", "C1"]),
+      face("ABB1A1", ["A", "B", "B1", "A1"]),
+      face("BCC1B1", ["B", "C", "C1", "B1"]),
+      face("CAA1C1", ["C", "A", "A1", "C1"])
+    ];
+    return scene(
+      "正三棱柱 ABC-A₁B₁C₁",
+      shape,
+      params,
+      [...base, ...top],
+      edges,
+      faces
+    );
+  }
+
+  if (shape === "cylinder") {
+    validatePositive(params, ["radius", "height"]);
+    const radius = params.radius;
+    const height = params.height;
+    const points = [
+      point("O", "O", [0, 0, 0]),
+      point("O1", "O₁", [0, 0, height]),
+      point("A", "A", [radius, 0, 0]),
+      point("A1", "A₁", [radius, 0, height]),
+      point("B", "B", [0, radius, 0]),
+      point("B1", "B₁", [0, radius, height])
+    ];
+    return scene(
+      "圆柱 O-O₁",
+      shape,
+      params,
+      points,
+      [
+        edge("OO1", "O", "O1", { dashed: true }),
+        edge("OA", "O", "A", { dashed: true }),
+        edge("O1A1", "O1", "A1", { dashed: true }),
+        edge("AA1", "A", "A1"),
+        edge("BB1", "B", "B1")
+      ],
+      [],
+      [
+        curve("C_bottom", [0, 0, 0], radius, "下底圆"),
+        curve("C_top", [0, 0, height], radius, "上底圆")
+      ],
+      [surface("S_cylinder", "cylinder", "圆柱侧面")]
+    );
+  }
+
+  if (shape === "cone") {
+    validatePositive(params, ["radius", "height"]);
+    const radius = params.radius;
+    const height = params.height;
+    return scene(
+      "圆锥 P-O",
+      shape,
+      params,
+      [
+        point("O", "O", [0, 0, 0]),
+        point("A", "A", [radius, 0, 0]),
+        point("B", "B", [0, radius, 0]),
+        point("P", "P", [0, 0, height])
+      ],
+      [
+        edge("OP", "O", "P", { dashed: true }),
+        edge("OA", "O", "A", { dashed: true }),
+        edge("PA", "P", "A"),
+        edge("PB", "P", "B")
+      ],
+      [],
+      [curve("C_base", [0, 0, 0], radius, "底面圆")],
+      [surface("S_cone", "cone", "圆锥侧面")]
+    );
+  }
+
+  validatePositive(params, ["radius"]);
+  const radius = params.radius;
   return scene(
-    "正三棱柱 ABC-A₁B₁C₁",
+    `球 O（半径 ${radius}）`,
     shape,
     params,
-    [...base, ...top],
-    edges,
-    faces
+    [
+      point("O", "O", [0, 0, 0]),
+      point("N", "N", [0, 0, radius]),
+      point("S", "S", [0, 0, -radius]),
+      point("A", "A", [radius, 0, 0]),
+      point("B", "B", [-radius, 0, 0]),
+      point("C", "C", [0, radius, 0]),
+      point("D", "D", [0, -radius, 0])
+    ],
+    [
+      edge("ON", "O", "N", { dashed: true }),
+      edge("OS", "O", "S", { dashed: true }),
+      edge("OA", "O", "A", { dashed: true })
+    ],
+    [],
+    [curve("C_equator", [0, 0, 0], radius, "赤道圆")],
+    [surface("S_sphere", "sphere", "球面")]
   );
 }
 
@@ -413,6 +563,179 @@ export function findEdge(scene: SceneState, id: string) {
 
 export function findFace(scene: SceneState, id: string) {
   return scene.faces.find((item) => item.id === id);
+}
+
+export function findCurve(scene: SceneState, id: string) {
+  return scene.curves.find((item) => item.id === id);
+}
+
+export function findSurface(scene: SceneState, id: string) {
+  return scene.surfaces.find((item) => item.id === id);
+}
+
+function circleBasis(normal: Vec3): [Vec3, Vec3] {
+  const unitNormal = normalize(normal);
+  if (Math.abs(unitNormal[2]) > 0.999) {
+    return [
+      [1, 0, 0],
+      [0, 1, 0]
+    ];
+  }
+  const axisU = normalize(cross([0, 0, 1], unitNormal));
+  return [axisU, normalize(cross(unitNormal, axisU))];
+}
+
+export function pointOnCircle(
+  curveEntity: CurveEntity,
+  angleRadians: number
+): Vec3 {
+  const [axisU, axisV] = circleBasis(curveEntity.normal);
+  return add(
+    curveEntity.center,
+    add(
+      scale(axisU, curveEntity.radius * Math.cos(angleRadians)),
+      scale(axisV, curveEntity.radius * Math.sin(angleRadians))
+    )
+  );
+}
+
+export function getCirclePositions(
+  curveEntity: CurveEntity,
+  segments = 128
+): Vec3[] {
+  const safeSegments = Math.max(24, segments);
+  return Array.from({ length: safeSegments + 1 }, (_, index) =>
+    pointOnCircle(curveEntity, (index / safeSegments) * Math.PI * 2)
+  );
+}
+
+export function cylinderSurfacePoint(
+  scene: SceneState,
+  angleDegrees: number,
+  height: number
+): Vec3 | null {
+  if (scene.shape !== "cylinder") return null;
+  const radius = scene.params.radius;
+  const maxHeight = scene.params.height;
+  if (
+    !Number.isFinite(angleDegrees) ||
+    !Number.isFinite(height) ||
+    height < 0 ||
+    height > maxHeight + EPSILON
+  ) {
+    return null;
+  }
+  const angle = (angleDegrees * Math.PI) / 180;
+  return [
+    radius * Math.cos(angle),
+    radius * Math.sin(angle),
+    Math.min(maxHeight, Math.max(0, height))
+  ];
+}
+
+export function coneSurfacePoint(
+  scene: SceneState,
+  angleDegrees: number,
+  distanceFromApex: number
+): Vec3 | null {
+  if (scene.shape !== "cone") return null;
+  const radius = scene.params.radius;
+  const height = scene.params.height;
+  const generatrixLength = Math.hypot(radius, height);
+  if (
+    !Number.isFinite(angleDegrees) ||
+    !Number.isFinite(distanceFromApex) ||
+    distanceFromApex < 0 ||
+    distanceFromApex > generatrixLength + EPSILON
+  ) {
+    return null;
+  }
+  const ratio = 1 - Math.min(generatrixLength, distanceFromApex) / generatrixLength;
+  const angle = (angleDegrees * Math.PI) / 180;
+  return [
+    radius * ratio * Math.cos(angle),
+    radius * ratio * Math.sin(angle),
+    height * ratio
+  ];
+}
+
+export function sphereSurfacePoint(
+  scene: SceneState,
+  azimuthDegrees: number,
+  latitudeDegrees: number
+): Vec3 | null {
+  if (scene.shape !== "sphere") return null;
+  if (
+    !Number.isFinite(azimuthDegrees) ||
+    !Number.isFinite(latitudeDegrees) ||
+    latitudeDegrees < -90 ||
+    latitudeDegrees > 90
+  ) {
+    return null;
+  }
+  const radius = scene.params.radius;
+  const azimuth = (azimuthDegrees * Math.PI) / 180;
+  const latitude = (latitudeDegrees * Math.PI) / 180;
+  const horizontalRadius = radius * Math.cos(latitude);
+  return [
+    horizontalRadius * Math.cos(azimuth),
+    horizontalRadius * Math.sin(azimuth),
+    radius * Math.sin(latitude)
+  ];
+}
+
+export function projectPointToSurface(
+  scene: SceneState,
+  surfaceEntity: SurfaceEntity,
+  position: Vec3
+): Vec3 | null {
+  if (surfaceEntity.surfaceType === "cylinder" && scene.shape === "cylinder") {
+    const height = scene.params.height;
+    const angle = Math.atan2(position[1], position[0]);
+    return cylinderSurfacePoint(
+      scene,
+      (angle * 180) / Math.PI,
+      Math.min(height, Math.max(0, position[2]))
+    );
+  }
+  if (surfaceEntity.surfaceType === "cone" && scene.shape === "cone") {
+    const angle = Math.atan2(position[1], position[0]);
+    const height = scene.params.height;
+    const radius = scene.params.radius;
+    const baseRadius = Math.hypot(position[0], position[1]);
+    const radialRatio = baseRadius / Math.max(radius, EPSILON);
+    const heightRatio = Math.max(0, Math.min(1, 1 - position[2] / height));
+    const ratio = Math.min(radialRatio, heightRatio);
+    const generatrixLength = Math.hypot(radius, height);
+    return coneSurfacePoint(
+      scene,
+      (angle * 180) / Math.PI,
+      generatrixLength * (1 - ratio)
+    );
+  }
+  if (surfaceEntity.surfaceType === "sphere" && scene.shape === "sphere") {
+    const magnitude = length(position);
+    if (magnitude < EPSILON) return null;
+    return scale(position, scene.params.radius / magnitude);
+  }
+  return null;
+}
+
+export function sceneBoundsPoints(scene: SceneState): Vec3[] {
+  const positions = scene.points
+    .filter((item) => item.visible)
+    .map((item) => item.pos);
+  scene.curves
+    .filter((item) => item.visible)
+    .forEach((item) => positions.push(...getCirclePositions(item, 32)));
+  if (scene.shape === "cone") {
+    positions.push([0, 0, scene.params.height]);
+  }
+  if (scene.shape === "sphere") {
+    const r = scene.params.radius;
+    positions.push([-r, -r, -r], [r, r, r]);
+  }
+  return positions;
 }
 
 export function getEdgePositions(
@@ -586,7 +909,7 @@ function nextPointLabel(used: Set<string>) {
 
 export function entityDisplayName(
   scene: SceneState,
-  entity: PointEntity | EdgeEntity | FaceEntity
+  entity: GeometryEntity
 ): string {
   if (entity.kind === "point") return `点 ${entity.label || entity.id}`;
   if (entity.kind === "edge") {
@@ -595,6 +918,8 @@ export function entityDisplayName(
     const b = findPoint(scene, entity.b)?.label || entity.b;
     return `棱 ${a}${b}`;
   }
+  if (entity.kind === "curve") return entity.label || "圆";
+  if (entity.kind === "surface") return entity.label;
   return entity.label || `面 ${entity.vertices.join("")}`;
 }
 
@@ -603,9 +928,13 @@ export function cloneScene(scene: SceneState): SceneState {
 }
 
 export function removeEntityCascade(scene: SceneState, entityId: string) {
-  const target = [...scene.points, ...scene.edges, ...scene.faces].find(
-    (item) => item.id === entityId
-  );
+  const target = [
+    ...scene.points,
+    ...scene.edges,
+    ...scene.faces,
+    ...scene.curves,
+    ...scene.surfaces
+  ].find((item) => item.id === entityId);
   if (!target) return;
 
   const removed = new Set<string>([entityId]);
@@ -626,23 +955,35 @@ export function removeEntityCascade(scene: SceneState, entityId: string) {
   scene.points = scene.points.filter((item) => !removed.has(item.id));
   scene.edges = scene.edges.filter((item) => !removed.has(item.id));
   scene.faces = scene.faces.filter((item) => !removed.has(item.id));
+  scene.curves = scene.curves.filter((item) => !removed.has(item.id));
+  scene.surfaces = scene.surfaces.filter((item) => !removed.has(item.id));
 }
 
-export function validateSceneData(value: unknown): value is SceneState {
-  if (!value || typeof value !== "object") return false;
-  const data = value as SceneState;
-  return (
-    data.version === 1 &&
-    typeof data.title === "string" &&
-    Array.isArray(data.points) &&
-    Array.isArray(data.edges) &&
-    Array.isArray(data.faces) &&
-    data.points.every(
-      (p) =>
-        p.kind === "point" &&
-        typeof p.id === "string" &&
-        Array.isArray(p.pos) &&
-        p.pos.length === 3
+export function normalizeSceneData(value: unknown): SceneState | null {
+  if (!value || typeof value !== "object") return null;
+  const data = value as Partial<SceneState> & Record<string, unknown>;
+  if (
+    data.version !== 1 ||
+    typeof data.title !== "string" ||
+    !Array.isArray(data.points) ||
+    !Array.isArray(data.edges) ||
+    !Array.isArray(data.faces) ||
+    !data.points.every(
+      (point) =>
+        point?.kind === "point" &&
+        typeof point.id === "string" &&
+        Array.isArray(point.pos) &&
+        point.pos.length === 3
     )
-  );
+  ) {
+    return null;
+  }
+  const shape = data.shape;
+  if (typeof shape !== "string" || !(shape in SHAPES)) return null;
+  data.curves = Array.isArray(data.curves) ? data.curves : [];
+  data.surfaces = Array.isArray(data.surfaces) ? data.surfaces : [];
+  data.measurements = Array.isArray(data.measurements) ? data.measurements : [];
+  data.params = typeof data.params === "object" && data.params ? data.params : {};
+  data.nextId = Number.isFinite(data.nextId) ? Number(data.nextId) : 1;
+  return data as SceneState;
 }
