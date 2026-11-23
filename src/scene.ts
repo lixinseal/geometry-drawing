@@ -9,6 +9,7 @@ import { LineGeometry } from "three/addons/lines/LineGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import {
   entityDisplayName,
+  findComposite,
   findCurve,
   findEdge,
   findFace,
@@ -619,12 +620,9 @@ export class GeometryScene {
     } else if (entity.kind === "curve") {
       world = this.toThree(entity.center);
     } else if (entity.kind === "surface") {
-      const height =
-        this.currentScene.shape === "cylinder" ||
-        this.currentScene.shape === "cone"
-          ? this.currentScene.params.height
-          : 0;
-      world = this.toThree([0, 0, height / 2]);
+      world = this.toThree(entity.center);
+    } else if (entity.kind === "composite") {
+      world = this.toThree(entity.sphereCenter);
     }
 
     if (!world) return null;
@@ -649,6 +647,7 @@ export class GeometryScene {
       findFace(this.currentScene, id) ||
       findCurve(this.currentScene, id) ||
       findSurface(this.currentScene, id) ||
+      findComposite(this.currentScene, id) ||
       null
     );
   }
@@ -714,6 +713,8 @@ export class GeometryScene {
     const material = new THREE.MeshBasicMaterial({
       color: item.color
         ? new THREE.Color(item.color)
+        : item.contact
+          ? 0xc75b20
         : selected
           ? 0xe8742d
           : 0x263b45,
@@ -792,16 +793,13 @@ export class GeometryScene {
 
   private buildSurface(item: SurfaceEntity) {
     if (!this.currentScene) return;
-    const radius = this.currentScene.params.radius;
-    const height = this.currentScene.params.height;
+    const radius = item.radius;
+    const height = item.height || 0;
     let geometry: THREE.BufferGeometry;
-    let centerY = 0;
     if (item.surfaceType === "cylinder") {
       geometry = new THREE.CylinderGeometry(radius, radius, height, 64, 1, false);
-      centerY = height / 2;
     } else if (item.surfaceType === "cone") {
       geometry = new THREE.ConeGeometry(radius, height, 64, 1, false);
-      centerY = height / 2;
     } else {
       geometry = new THREE.SphereGeometry(radius, 64, 40);
     }
@@ -818,7 +816,7 @@ export class GeometryScene {
       side: THREE.DoubleSide
     });
     const mesh = new THREE.Mesh(geometry, material);
-    mesh.position.y = centerY;
+    mesh.position.copy(this.toThree(item.center));
     mesh.renderOrder = selected ? 9 : 2;
     mesh.userData = { entityId: item.id, entityKind: "surface" };
     this.sceneRoot.add(mesh);
