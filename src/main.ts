@@ -37,22 +37,28 @@ import {
   arePointsCoplanar,
   buildSolid,
   cloneScene,
+  coneSurfacePoint,
+  cylinderSurfacePoint,
   distance,
   entityDisplayName,
   faceNormal,
+  findCurve,
   findEdge,
   findFace,
   findPoint,
+  findSurface,
   getEdgePositions,
   getFacePositions,
   intersectSegmentPlane,
   makeAuxEdge,
   makeAuxFace,
   makeAuxPoint,
+  normalizeSceneData,
   orderCoplanarIds,
+  pointOnCircle,
   projectPointToLine,
   removeEntityCascade,
-  validateSceneData
+  sphereSurfacePoint
 } from "./geometry";
 import { GeometryScene, type SnapResult } from "./scene";
 import type {
@@ -90,7 +96,7 @@ const ICONS = {
   Redo2,
   Ruler,
   RotateCcw,
-  Rotate3D,
+  Rotate3d: Rotate3D,
   Save,
   Shapes,
   Split,
@@ -117,7 +123,7 @@ const TOOL_LABELS: Record<ToolKind, string> = {
 
 const TOOL_INSTRUCTIONS: Record<ToolKind, string> = {
   select: "点击点、棱或面查看对象信息",
-  point: "点击面、棱或空白基准面添加任意点",
+  point: "点击平面、棱、曲面或空白基准面添加任意点",
   line: "依次点击两个点创建辅助线段",
   extend: "点击一条棱或辅助线段，再选择延长方向和长度",
   midpoint: "依次点击两个点，生成它们的中点",
@@ -209,6 +215,30 @@ class GeometryApp {
     mustElement<HTMLParagraphElement>("point-distance-hint");
   private readonly edgePointFields =
     mustElement<HTMLDivElement>("edge-point-fields");
+  private readonly circlePointFields =
+    mustElement<HTMLDivElement>("circle-point-fields");
+  private readonly pointCircleSelect =
+    mustElement<HTMLSelectElement>("point-circle-select");
+  private readonly pointCircleInputMode =
+    mustElement<HTMLSelectElement>("point-circle-input-mode");
+  private readonly pointCircleValue =
+    mustElement<HTMLInputElement>("point-circle-value");
+  private readonly pointCircleValueLabel =
+    mustElement<HTMLElement>("point-circle-value-label");
+  private readonly pointCircleHint =
+    mustElement<HTMLElement>("point-circle-hint");
+  private readonly surfacePointFields =
+    mustElement<HTMLDivElement>("surface-point-fields");
+  private readonly pointSurfaceAngle =
+    mustElement<HTMLInputElement>("point-surface-angle");
+  private readonly pointSurfaceSecondary =
+    mustElement<HTMLInputElement>("point-surface-secondary");
+  private readonly surfaceAngleLabel =
+    mustElement<HTMLElement>("surface-angle-label");
+  private readonly surfaceSecondaryLabel =
+    mustElement<HTMLElement>("surface-secondary-label");
+  private readonly pointSurfaceHint =
+    mustElement<HTMLElement>("point-surface-hint");
   private readonly coordinatePointFields =
     mustElement<HTMLDivElement>("coordinate-point-fields");
   private readonly pointX = mustElement<HTMLInputElement>("point-x");
@@ -325,10 +355,8 @@ class GeometryApp {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed: unknown = JSON.parse(saved);
-        if (validateSceneData(parsed)) {
-          parsed.measurements ??= [];
-          return parsed;
-        }
+        const normalized = normalizeSceneData(parsed);
+        if (normalized) return normalized;
       }
     } catch {
       // Ignore an invalid autosave and start with a clean shape.
@@ -400,6 +428,9 @@ class GeometryApp {
     );
 
     this.pointMode.addEventListener("change", () => {
+      this.updatePointModeFields();
+    });
+    this.pointCircleInputMode.addEventListener("change", () => {
       this.updatePointModeFields();
     });
     this.pointEdgeSelect.addEventListener("change", () => {
@@ -603,9 +634,52 @@ class GeometryApp {
   }
 
   private updatePointModeFields() {
-    const edgeMode = this.pointMode.value === "edge";
+    const mode = this.pointMode.value;
+    const edgeMode = mode === "edge";
+    const circleMode = mode === "circle";
+    const surfaceMode = mode === "surface";
     this.edgePointFields.hidden = !edgeMode;
-    this.coordinatePointFields.hidden = edgeMode;
+    this.circlePointFields.hidden = !circleMode;
+    this.surfacePointFields.hidden = !surfaceMode;
+    this.coordinatePointFields.hidden = !(mode === "coordinates");
+
+    if (circleMode) {
+      const curve = findCurve(this.sceneData, this.pointCircleSelect.value);
+      const circleModeValue = this.pointCircleInputMode.value;
+      if (!curve) {
+        this.pointCircleHint.textContent = "当前几何体没有可定位的圆";
+      } else {
+        const circumference = Math.PI * 2 * curve.radius;
+        this.pointCircleValueLabel.textContent =
+          circleModeValue === "arc" ? "沿圆顺时针弧长" : "圆心角（°）";
+        this.pointCircleHint.textContent =
+          circleModeValue === "arc"
+            ? `可填 0 到 ${round(circumference)}；0° 对应 x 轴正方向`
+            : "可填 0 到 360；从 x 轴正方向朝 y 轴正方向计算";
+      }
+    }
+
+    if (surfaceMode) {
+      if (this.sceneData.shape === "cylinder") {
+        this.surfaceAngleLabel.textContent = "方位角（°）";
+        this.surfaceSecondaryLabel.textContent = "距底面高度";
+        this.pointSurfaceHint.textContent = `高度范围 0 到 ${round(this.sceneData.params.height)}`;
+      } else if (this.sceneData.shape === "cone") {
+        const generatrixLength = Math.hypot(
+          this.sceneData.params.radius,
+          this.sceneData.params.height
+        );
+        this.surfaceAngleLabel.textContent = "方位角（°）";
+        this.surfaceSecondaryLabel.textContent = "距顶点距离";
+        this.pointSurfaceHint.textContent = `距离范围 0 到 ${round(generatrixLength)}`;
+      } else if (this.sceneData.shape === "sphere") {
+        this.surfaceAngleLabel.textContent = "方位角（°）";
+        this.surfaceSecondaryLabel.textContent = "纬度（°）";
+        this.pointSurfaceHint.textContent = "纬度范围 -90 到 90；正纬度位于北半球";
+      } else {
+        this.pointSurfaceHint.textContent = "当前几何体没有曲面";
+      }
+    }
   }
 
   private renderColorSwatches() {
@@ -638,7 +712,9 @@ class GeometryApp {
       return;
     }
     const fallback =
-      entity.kind === "face" ? "#d97706" : "#0f766e";
+      entity.kind === "face" || entity.kind === "surface"
+        ? "#d97706"
+        : "#0f766e";
     const color = (entity.color || fallback).toLowerCase();
     this.colorEditor.hidden = false;
     this.colorPicker.value = color;
@@ -662,7 +738,9 @@ class GeometryApp {
         const target =
           draft.points.find((item) => item.id === entity.id) ||
           draft.edges.find((item) => item.id === entity.id) ||
-          draft.faces.find((item) => item.id === entity.id);
+          draft.faces.find((item) => item.id === entity.id) ||
+          draft.curves.find((item) => item.id === entity.id) ||
+          draft.surfaces.find((item) => item.id === entity.id);
         if (target) target.color = color;
       },
       `${entityDisplayName(this.sceneData, entity)}的颜色已更新`
@@ -672,6 +750,7 @@ class GeometryApp {
 
   private refreshPointEditor() {
     const previousEdge = this.pointEdgeSelect.value;
+    const previousCircle = this.pointCircleSelect.value;
     this.pointEdgeSelect.textContent = "";
     this.sceneData.edges.forEach((edge) => {
       const option = document.createElement("option");
@@ -686,6 +765,41 @@ class GeometryApp {
     ) {
       this.pointEdgeSelect.value = previousEdge;
     }
+
+    this.pointCircleSelect.textContent = "";
+    this.sceneData.curves.forEach((curve) => {
+      const option = document.createElement("option");
+      option.value = curve.id;
+      option.textContent = entityDisplayName(this.sceneData, curve);
+      this.pointCircleSelect.appendChild(option);
+    });
+    if (
+      previousCircle &&
+      this.sceneData.curves.some((curve) => curve.id === previousCircle)
+    ) {
+      this.pointCircleSelect.value = previousCircle;
+    }
+
+    const circleOption = this.pointMode.querySelector<HTMLOptionElement>(
+      'option[value="circle"]'
+    );
+    const surfaceOption = this.pointMode.querySelector<HTMLOptionElement>(
+      'option[value="surface"]'
+    );
+    if (circleOption) circleOption.disabled = this.sceneData.curves.length === 0;
+    if (surfaceOption) {
+      surfaceOption.disabled = this.sceneData.surfaces.length === 0;
+    }
+    if (this.pointMode.value === "circle" && this.sceneData.curves.length === 0) {
+      this.pointMode.value = "coordinates";
+    }
+    if (
+      this.pointMode.value === "surface" &&
+      this.sceneData.surfaces.length === 0
+    ) {
+      this.pointMode.value = "coordinates";
+    }
+
     this.refreshPointAnchorOptions(true);
     this.updatePointModeFields();
   }
@@ -728,7 +842,8 @@ class GeometryApp {
   }
 
   private createExactPoint() {
-    if (this.pointMode.value === "coordinates") {
+    const mode = this.pointMode.value;
+    if (mode === "coordinates") {
       const position: [number, number, number] = [
         Number(this.pointX.value),
         Number(this.pointY.value),
@@ -744,6 +859,108 @@ class GeometryApp {
         y: position[1],
         z: position[2]
       });
+      return;
+    }
+
+    if (mode === "circle") {
+      const curve = findCurve(this.sceneData, this.pointCircleSelect.value);
+      const value = Number(this.pointCircleValue.value);
+      if (!curve || !Number.isFinite(value)) {
+        this.showToolError("请选择圆周并输入有效参数");
+        return;
+      }
+      const arcMode = this.pointCircleInputMode.value === "arc";
+      const circumference = Math.PI * 2 * curve.radius;
+      if (arcMode && (value < 0 || value > circumference + 1e-7)) {
+        this.showToolError(`弧长必须位于 0 到 ${round(circumference)} 之间`);
+        return;
+      }
+      const angleDegrees = arcMode
+        ? (value / Math.max(curve.radius, 1e-7)) * (180 / Math.PI)
+        : ((value % 360) + 360) % 360;
+      const angleRadians = (angleDegrees * Math.PI) / 180;
+      const position = pointOnCircle(curve, angleRadians);
+      this.createPointWithConstraint(
+        position,
+        arcMode
+          ? { type: "circle-arc", curveId: curve.id, arcLength: value }
+          : { type: "circle-angle", curveId: curve.id, angleDegrees },
+        arcMode
+          ? `在${curve.label}上，弧长 ${round(value)}`
+          : `在${curve.label}上，圆心角 ${round(angleDegrees)}°`
+      );
+      return;
+    }
+
+    if (mode === "surface") {
+      const surface = this.sceneData.surfaces[0];
+      const angle = Number(this.pointSurfaceAngle.value);
+      const secondary = Number(this.pointSurfaceSecondary.value);
+      if (!surface || !Number.isFinite(angle) || !Number.isFinite(secondary)) {
+        this.showToolError("请输入有效的曲面定位参数");
+        return;
+      }
+      if (this.sceneData.shape === "cylinder") {
+        const position = cylinderSurfacePoint(this.sceneData, angle, secondary);
+        if (!position) {
+          this.showToolError(
+            `高度必须位于 0 到 ${round(this.sceneData.params.height)} 之间`
+          );
+          return;
+        }
+        this.createPointWithConstraint(
+          position,
+          {
+            type: "cylinder-surface",
+            surfaceId: surface.id,
+            angleDegrees: angle,
+            height: secondary
+          },
+          `在圆柱侧面上，方位角 ${round(angle)}°，高 ${round(secondary)}`
+        );
+        return;
+      }
+      if (this.sceneData.shape === "cone") {
+        const position = coneSurfacePoint(this.sceneData, angle, secondary);
+        if (!position) {
+          const length = Math.hypot(
+            this.sceneData.params.radius,
+            this.sceneData.params.height
+          );
+          this.showToolError(`距顶点距离必须位于 0 到 ${round(length)} 之间`);
+          return;
+        }
+        this.createPointWithConstraint(
+          position,
+          {
+            type: "cone-surface",
+            surfaceId: surface.id,
+            angleDegrees: angle,
+            distanceFromApex: secondary
+          },
+          `在圆锥侧面上，方位角 ${round(angle)}°，距顶点 ${round(secondary)}`
+        );
+        return;
+      }
+      if (this.sceneData.shape === "sphere") {
+        const position = sphereSurfacePoint(this.sceneData, angle, secondary);
+        if (!position) {
+          this.showToolError("纬度必须位于 -90° 到 90° 之间");
+          return;
+        }
+        this.createPointWithConstraint(
+          position,
+          {
+            type: "sphere-surface",
+            surfaceId: surface.id,
+            azimuthDegrees: angle,
+            latitudeDegrees: secondary
+          },
+          `在球面上，方位角 ${round(angle)}°，纬度 ${round(secondary)}°`
+        );
+        return;
+      }
+      this.showToolError("当前几何体没有可定位曲面");
       return;
     }
 
@@ -961,7 +1178,7 @@ class GeometryApp {
     }
 
     const placement =
-      snap?.kind === "edge"
+      snap?.kind === "edge" || snap?.kind === "curve"
         ? { kind: snap.kind, position: snap.position }
         : this.renderer3d.placementPoint(clientX, clientY);
     if (!placement) {
@@ -971,10 +1188,25 @@ class GeometryApp {
 
     this.mutate(
       (draft) => {
-        makeAuxPoint(draft, placement.position);
+        const created = makeAuxPoint(draft, placement.position);
+        if (snap?.kind === "curve" && snap.entity.kind === "curve") {
+          const angle = Math.atan2(
+            snap.position[1] - snap.entity.center[1],
+            snap.position[0] - snap.entity.center[0]
+          );
+          created.constraint = {
+            type: "circle-angle",
+            curveId: snap.entity.id,
+            angleDegrees: ((angle * 180) / Math.PI + 360) % 360
+          };
+        }
       },
       placement.kind === "face"
         ? "已在所选表面添加点"
+        : placement.kind === "surface"
+          ? "已在曲面表面添加点"
+          : placement.kind === "curve"
+            ? "已在圆周上添加点"
         : placement.kind === "edge"
           ? "已在所选棱上添加点"
           : "已在水平基准面添加点"
@@ -1543,7 +1775,7 @@ class GeometryApp {
     if (!selected.length) {
       this.selectionTitle.textContent = "未选择对象";
       this.selectionDetails.innerHTML =
-        "<div><dt>提示</dt><dd>点击图形中的点、棱或面</dd></div>";
+        "<div><dt>提示</dt><dd>点击图形中的点、棱、面、圆周或曲面</dd></div>";
       return;
     }
     if (selected.length > 1) {
@@ -1551,7 +1783,7 @@ class GeometryApp {
       this.selectionDetails.innerHTML = selected
         .map(
           (entity) =>
-            `<div><dt>${entity.kind === "point" ? "点" : entity.kind === "edge" ? "棱" : "面"}</dt><dd>${entityDisplayName(this.sceneData, entity)}</dd></div>`
+            `<div><dt>${entity.kind === "point" ? "点" : entity.kind === "edge" ? "棱" : entity.kind === "face" ? "面" : entity.kind === "curve" ? "圆" : "曲面"}</dt><dd>${entityDisplayName(this.sceneData, entity)}</dd></div>`
         )
         .join("");
       return;
@@ -1581,6 +1813,39 @@ class GeometryApp {
           "定位",
           `坐标 (${round(entity.constraint.x)}, ${round(entity.constraint.y)}, ${round(entity.constraint.z)})`
         ]);
+      } else if (entity.constraint?.type === "circle-angle") {
+        const constrainedCurve = findCurve(
+          this.sceneData,
+          entity.constraint.curveId
+        );
+        rows.push([
+          "定位",
+          `${constrainedCurve?.label || entity.constraint.curveId} · 圆心角 ${round(entity.constraint.angleDegrees)}°`
+        ]);
+      } else if (entity.constraint?.type === "circle-arc") {
+        const constrainedCurve = findCurve(
+          this.sceneData,
+          entity.constraint.curveId
+        );
+        rows.push([
+          "定位",
+          `${constrainedCurve?.label || entity.constraint.curveId} · 弧长 ${round(entity.constraint.arcLength)}`
+        ]);
+      } else if (entity.constraint?.type === "cylinder-surface") {
+        rows.push([
+          "定位",
+          `圆柱侧面 · 方位角 ${round(entity.constraint.angleDegrees)}° · 高 ${round(entity.constraint.height)}`
+        ]);
+      } else if (entity.constraint?.type === "cone-surface") {
+        rows.push([
+          "定位",
+          `圆锥侧面 · 方位角 ${round(entity.constraint.angleDegrees)}° · 距顶点 ${round(entity.constraint.distanceFromApex)}`
+        ]);
+      } else if (entity.constraint?.type === "sphere-surface") {
+        rows.push([
+          "定位",
+          `球面 · 方位角 ${round(entity.constraint.azimuthDegrees)}° · 纬度 ${round(entity.constraint.latitudeDegrees)}°`
+        ]);
       }
     } else if (entity.kind === "edge") {
       const positions = getEdgePositions(this.sceneData, entity);
@@ -1596,7 +1861,7 @@ class GeometryApp {
         rows.push(["长度", round(distance(positions[0], positions[1]))]);
       }
       rows.push(["类型", entity.auxiliary ? "辅助线" : "基础棱"]);
-    } else {
+    } else if (entity.kind === "face") {
       rows.push([
         "顶点",
         entity.vertices
@@ -1605,6 +1870,18 @@ class GeometryApp {
       ]);
       rows.push(["面积", round(faceArea(this.sceneData, entity))]);
       rows.push(["类型", entity.auxiliary ? "辅助平面" : "基础面"]);
+    } else if (entity.kind === "curve") {
+      rows.push([
+        "圆心",
+        formatPoint(entity.center)
+      ]);
+      rows.push(["半径", round(entity.radius)]);
+      rows.push(["周长", round(Math.PI * 2 * entity.radius, 4)]);
+      rows.push(["类型", "基础圆"]);
+    } else {
+      rows.push(["曲面", entity.label]);
+      rows.push(["类型", "基础曲面"]);
+      rows.push(["几何体", SHAPES[this.sceneData.shape].label]);
     }
     this.selectionDetails.innerHTML = rows
       .map(
@@ -1621,7 +1898,9 @@ class GeometryApp {
         (id) =>
           findPoint(this.sceneData, id) ||
           findEdge(this.sceneData, id) ||
-          findFace(this.sceneData, id)
+          findFace(this.sceneData, id) ||
+          findCurve(this.sceneData, id) ||
+          findSurface(this.sceneData, id)
       )
       .filter((item): item is GeometryEntity => Boolean(item));
   }
@@ -1630,14 +1909,16 @@ class GeometryApp {
     this.objectList.textContent = "";
     const groups: Array<{
       title: string;
-      entities: Array<PointEntity | EdgeEntity | FaceEntity>;
+      entities: GeometryEntity[];
     }> = [
       {
         title: "点",
         entities: this.sceneData.points.filter((item) => !item.internal)
       },
       { title: "线", entities: this.sceneData.edges },
-      { title: "面", entities: this.sceneData.faces }
+      { title: "面", entities: this.sceneData.faces },
+      { title: "圆", entities: this.sceneData.curves },
+      { title: "曲面", entities: this.sceneData.surfaces }
     ];
 
     groups.forEach((group) => {
@@ -1701,6 +1982,8 @@ class GeometryApp {
       this.sceneData.points.length +
         this.sceneData.edges.length +
         this.sceneData.faces.length +
+        this.sceneData.curves.length +
+        this.sceneData.surfaces.length +
         (this.sceneData.measurements?.length || 0)
     );
   }
@@ -1817,10 +2100,10 @@ class GeometryApp {
     if (!file) return;
     try {
       const parsed: unknown = JSON.parse(await file.text());
-      if (!validateSceneData(parsed)) throw new Error("文件不是有效的场景 JSON");
-      parsed.measurements ??= [];
+      const normalized = normalizeSceneData(parsed);
+      if (!normalized) throw new Error("文件不是有效的场景 JSON");
       this.history.push(cloneScene(this.sceneData));
-      this.sceneData = parsed;
+      this.sceneData = normalized;
       this.future = [];
       this.selectedIds.clear();
       this.clearToolPicks(false);
