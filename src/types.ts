@@ -6,7 +6,10 @@ export type ShapeKind =
   | "tetra"
   | "triPyramid"
   | "quadPyramid"
-  | "triPrism";
+  | "triPrism"
+  | "cylinder"
+  | "cone"
+  | "sphere";
 
 export type ToolKind =
   | "select"
@@ -45,6 +48,34 @@ export interface PointEntity {
         x: number;
         y: number;
         z: number;
+      }
+    | {
+        type: "circle-angle";
+        curveId: string;
+        angleDegrees: number;
+      }
+    | {
+        type: "circle-arc";
+        curveId: string;
+        arcLength: number;
+      }
+    | {
+        type: "cylinder-surface";
+        surfaceId: string;
+        angleDegrees: number;
+        height: number;
+      }
+    | {
+        type: "cone-surface";
+        surfaceId: string;
+        angleDegrees: number;
+        distanceFromApex: number;
+      }
+    | {
+        type: "sphere-surface";
+        surfaceId: string;
+        azimuthDegrees: number;
+        latitudeDegrees: number;
       };
 }
 
@@ -70,6 +101,30 @@ export interface FaceEntity {
   label?: string;
 }
 
+export interface CurveEntity {
+  kind: "curve";
+  id: string;
+  curveType: "circle";
+  center: Vec3;
+  normal: Vec3;
+  radius: number;
+  label: string;
+  visible: boolean;
+  auxiliary: boolean;
+  color?: string;
+  dashed?: boolean;
+}
+
+export interface SurfaceEntity {
+  kind: "surface";
+  id: string;
+  surfaceType: "cylinder" | "cone" | "sphere";
+  label: string;
+  visible: boolean;
+  auxiliary: boolean;
+  color?: string;
+}
+
 export interface MeasurementEntity {
   kind: "measurement";
   id: string;
@@ -81,7 +136,12 @@ export interface MeasurementEntity {
   color: string;
 }
 
-export type GeometryEntity = PointEntity | EdgeEntity | FaceEntity;
+export type GeometryEntity =
+  | PointEntity
+  | EdgeEntity
+  | FaceEntity
+  | CurveEntity
+  | SurfaceEntity;
 
 export interface SceneState {
   version: 1;
@@ -91,6 +151,8 @@ export interface SceneState {
   points: PointEntity[];
   edges: EdgeEntity[];
   faces: FaceEntity[];
+  curves: CurveEntity[];
+  surfaces: SurfaceEntity[];
   measurements?: MeasurementEntity[];
   nextId: number;
 }
