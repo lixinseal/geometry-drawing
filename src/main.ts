@@ -32,16 +32,22 @@ import {
   createIcons
 } from "lucide";
 import {
+  COMPOSITE_HOSTS,
+  COMPOSITE_RELATIONS,
   SHAPES,
   angleDegrees,
   arePointsCoplanar,
+  buildCompositeSolid,
   buildSolid,
   cloneScene,
+  compositeHostFields,
   coneSurfacePoint,
+  cross,
   cylinderSurfacePoint,
   distance,
   entityDisplayName,
   faceNormal,
+  findComposite,
   findCurve,
   findEdge,
   findFace,
@@ -53,12 +59,17 @@ import {
   makeAuxEdge,
   makeAuxFace,
   makeAuxPoint,
+  normalize,
   normalizeSceneData,
   orderCoplanarIds,
   pointOnCircle,
+  previewComposite,
   projectPointToLine,
   removeEntityCascade,
-  sphereSurfacePoint
+  sectionPolygonPoints,
+  spherePlaneSection,
+  sphereSurfacePoint,
+  subtract
 } from "./geometry";
 import { GeometryScene, type SnapResult } from "./scene";
 import type {
@@ -68,6 +79,9 @@ import type {
   MeasurementEntity,
   PointEntity,
   SceneState,
+  SurfaceEntity,
+  CompositeHostKind,
+  CompositeRelationKind,
   ShapeKind,
   ToolKind,
   Vec3
@@ -117,6 +131,7 @@ const TOOL_LABELS: Record<ToolKind, string> = {
   perpendicular: "垂线",
   parallel: "平行",
   plane: "平面",
+  section: "截面",
   intersection: "交点",
   delete: "删除"
 };
@@ -133,6 +148,7 @@ const TOOL_INSTRUCTIONS: Record<ToolKind, string> = {
   perpendicular: "先点击一个点，再点击一条棱",
   parallel: "先点击一个点，再点击一条棱",
   plane: "依次点击三个不共线的点",
+  section: "点击三个不共线的点，生成多面体截面和球面截面圆",
   intersection: "先点击线段，再点击一个平面",
   delete: "点击一个辅助点、辅助线或辅助面删除"
 };
@@ -203,6 +219,18 @@ class GeometryApp {
     mustElement<HTMLDivElement>("parameter-fields");
   private readonly shapeMessage =
     mustElement<HTMLParagraphElement>("shape-message");
+  private readonly compositeHostSelect =
+    mustElement<HTMLSelectElement>("composite-host-select");
+  private readonly compositeRelationSelect =
+    mustElement<HTMLSelectElement>("composite-relation-select");
+  private readonly compositeParameterFields =
+    mustElement<HTMLDivElement>("composite-parameter-fields");
+  private readonly compositePreview =
+    mustElement<HTMLDListElement>("composite-preview");
+  private readonly compositeMessage =
+    mustElement<HTMLParagraphElement>("composite-message");
+  private readonly createCompositeButton =
+    mustElement<HTMLButtonElement>("create-composite-btn");
   private readonly pointMode =
     mustElement<HTMLSelectElement>("point-mode");
   private readonly pointEdgeSelect =
@@ -229,6 +257,8 @@ class GeometryApp {
     mustElement<HTMLElement>("point-circle-hint");
   private readonly surfacePointFields =
     mustElement<HTMLDivElement>("surface-point-fields");
+  private readonly pointSurfaceSelect =
+    mustElement<HTMLSelectElement>("point-surface-select");
   private readonly pointSurfaceAngle =
     mustElement<HTMLInputElement>("point-surface-angle");
   private readonly pointSurfaceSecondary =
@@ -422,6 +452,22 @@ class GeometryApp {
       this.shapeMessage.classList.remove("error");
     });
 
+    this.compositeHostSelect.addEventListener("change", () => {
+      this.populateCompositeRelations();
+      this.populateCompositeParameterFields();
+      this.updateCompositePreview();
+    });
+    this.compositeRelationSelect.addEventListener("change", () => {
+      this.populateCompositeParameterFields();
+      this.updateCompositePreview();
+    });
+    this.compositeParameterFields.addEventListener("input", () => {
+      this.updateCompositePreview();
+    });
+    this.createCompositeButton.addEventListener("click", () => {
+      this.createComposite();
+    });
+
     mustElement<HTMLButtonElement>("create-shape-btn").addEventListener(
       "click",
       () => this.createShape()
@@ -435,6 +481,9 @@ class GeometryApp {
     });
     this.pointEdgeSelect.addEventListener("change", () => {
       this.refreshPointAnchorOptions(true);
+    });
+    this.pointSurfaceSelect.addEventListener("change", () => {
+      this.updatePointModeFields();
     });
     mustElement<HTMLButtonElement>("create-exact-point-btn").addEventListener(
       "click",
@@ -631,6 +680,191 @@ class GeometryApp {
   private syncFormToScene() {
     this.shapeSelect.value = this.sceneData.shape;
     this.populateParameterFields();
+    this.populateCompositeRelations();
+    this.syncCompositeFormToScene();
+  }
+
+  private compositeHost(): CompositeHostKind {
+    return this.compositeHostSelect.value as CompositeHostKind;
+  }
+
+  private compositeRelation(): CompositeRelationKind {
+    return this.compositeRelationSelect.value as CompositeRelationKind;
+  }
+
+  private populateCompositeRelations() {
+    const current = this.sceneData.composites?.[0];
+    if (current && !this.compositeHostSelect.dataset.initialized) {
+      this.compositeHostSelect.value = current.hostShape;
+    } else if (!this.compositeHostSelect.dataset.initialized) {
+      this.compositeHostSelect.value =
+        this.sceneData.shape === "cuboid" ||
+        this.sceneData.shape === "cylinder" ||
+        this.sceneData.shape === "cone"
+          ? this.sceneData.shape
+          : "cube";
+    }
+
+    const host = this.compositeHost();
+    const previous = this.compositeRelationSelect.value;
+    this.compositeRelationSelect.textContent = "";
+    COMPOSITE_HOSTS[host].relations.forEach((relation) => {
+      const option = document.createElement("option");
+      option.value = relation;
+      option.textContent = COMPOSITE_RELATIONS[relation].label;
+      option.title = COMPOSITE_RELATIONS[relation].description;
+      this.compositeRelationSelect.appendChild(option);
+    });
+    if (
+      previous &&
+      COMPOSITE_HOSTS[host].relations.includes(
+        previous as CompositeRelationKind
+      )
+    ) {
+      this.compositeRelationSelect.value = previous;
+    } else if (
+      current &&
+      current.hostShape === host &&
+      COMPOSITE_HOSTS[host].relations.includes(current.relation)
+    ) {
+      this.compositeRelationSelect.value = current.relation;
+    }
+    this.compositeHostSelect.dataset.initialized = "1";
+  }
+
+  private syncCompositeFormToScene() {
+    const composite = this.sceneData.composites?.[0];
+    if (composite) {
+      this.compositeHostSelect.value = composite.hostShape;
+      this.populateCompositeRelations();
+      this.compositeRelationSelect.value = composite.relation;
+    }
+    this.populateCompositeParameterFields();
+    this.updateCompositePreview();
+  }
+
+  private populateCompositeParameterFields() {
+    const host = this.compositeHost();
+    const relation = this.compositeRelation();
+    const composite = this.sceneData.composites?.[0];
+    const previous = new Map(
+      [...this.compositeParameterFields.querySelectorAll<HTMLInputElement>(
+        "input[data-param]"
+      )].map((input) => [input.dataset.param || "", input.value])
+    );
+    this.compositeParameterFields.textContent = "";
+    compositeHostFields(host, relation).forEach((field) => {
+      const label = document.createElement("label");
+      label.className = "field";
+      const caption = document.createElement("span");
+      caption.textContent = field.label;
+      const input = document.createElement("input");
+      input.type = "number";
+      input.min = "0.1";
+      input.step = "0.1";
+      input.dataset.param = field.key;
+      input.setAttribute("inputmode", "decimal");
+      input.value = String(
+        (composite?.hostShape === host &&
+        Number(composite.hostParams[field.key]) > 0
+          ? composite.hostParams[field.key]
+          : previous.has(field.key)
+            ? Number(previous.get(field.key))
+            : field.defaultValue) || ""
+      );
+      label.append(caption, input);
+      this.compositeParameterFields.appendChild(label);
+    });
+  }
+
+  private readCompositeParameters() {
+    const params: Record<string, number> = {};
+    this.compositeParameterFields
+      .querySelectorAll<HTMLInputElement>("input[data-param]")
+      .forEach((input) => {
+        params[input.dataset.param || ""] = Number(input.value);
+      });
+    return params;
+  }
+
+  private updateCompositePreview() {
+    try {
+      const preview = previewComposite(
+        this.compositeHost(),
+        this.compositeRelation(),
+        this.readCompositeParameters()
+      );
+      const rows: Array<[string, string]> = [
+        ["关系", preview.description],
+        ["球心", formatPoint(preview.sphereCenter)],
+        ["球半径", round(preview.sphereRadius, 4)],
+        ["接触/经过", this.compositeContactSummary()]
+      ];
+      this.compositePreview.innerHTML = rows
+        .map(
+          ([term, value]) =>
+            `<div><dt>${term}</dt><dd>${value}</dd></div>`
+        )
+        .join("");
+      this.compositeMessage.textContent = "关系有效";
+      this.compositeMessage.classList.remove("error");
+      this.createCompositeButton.disabled = false;
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "组合参数无效";
+      this.compositePreview.innerHTML =
+        `<div><dt>提示</dt><dd>${message}</dd></div>`;
+      this.compositeMessage.textContent = message;
+      this.compositeMessage.classList.add("error");
+      this.createCompositeButton.disabled = true;
+    }
+  }
+
+  private compositeContactSummary() {
+    switch (this.compositeRelation()) {
+      case "cube-face-sphere":
+        return "6 个面中心";
+      case "cube-edge-sphere":
+        return "12 条棱中点";
+      case "cube-circumsphere":
+      case "cuboid-circumsphere":
+        return "8 个顶点";
+      case "cylinder-insphere":
+        return "上下底面中心 + 侧面接触圆";
+      case "cylinder-circumsphere":
+        return "上下底面圆周";
+      case "cone-insphere":
+        return "底面中心 + 侧面切圆";
+      case "cone-circumsphere":
+        return "顶点 + 底面圆周";
+    }
+  }
+
+  private createComposite() {
+    try {
+      const host = this.compositeHost();
+      const relation = this.compositeRelation();
+      const nextScene = buildCompositeSolid(
+        host,
+        relation,
+        this.readCompositeParameters()
+      );
+      this.history.push(cloneScene(this.sceneData));
+      if (this.history.length > 60) this.history.shift();
+      this.sceneData = nextScene;
+      this.future = [];
+      this.selectedIds = new Set(["COMPOSITE_1"]);
+      this.clearToolPicks(false);
+      this.syncFormToScene();
+      this.persist();
+      this.operationStatus.textContent = `${COMPOSITE_HOSTS[host].label}${COMPOSITE_RELATIONS[relation].label}已生成`;
+      this.refreshAll(true);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "组合参数无效";
+      this.compositeMessage.textContent = message;
+      this.compositeMessage.classList.add("error");
+    }
   }
 
   private updatePointModeFields() {
@@ -660,24 +894,28 @@ class GeometryApp {
     }
 
     if (surfaceMode) {
-      if (this.sceneData.shape === "cylinder") {
+      const surface = findSurface(
+        this.sceneData,
+        this.pointSurfaceSelect.value
+      );
+      if (!surface) {
+        this.pointSurfaceHint.textContent = "当前几何体没有可定位曲面";
+      } else if (surface.surfaceType === "cylinder") {
         this.surfaceAngleLabel.textContent = "方位角（°）";
         this.surfaceSecondaryLabel.textContent = "距底面高度";
-        this.pointSurfaceHint.textContent = `高度范围 0 到 ${round(this.sceneData.params.height)}`;
-      } else if (this.sceneData.shape === "cone") {
+        this.pointSurfaceHint.textContent = `高度范围 0 到 ${round(surface.height || 0)}`;
+      } else if (surface.surfaceType === "cone") {
         const generatrixLength = Math.hypot(
-          this.sceneData.params.radius,
-          this.sceneData.params.height
+          surface.radius,
+          surface.height || 0
         );
         this.surfaceAngleLabel.textContent = "方位角（°）";
         this.surfaceSecondaryLabel.textContent = "距顶点距离";
         this.pointSurfaceHint.textContent = `距离范围 0 到 ${round(generatrixLength)}`;
-      } else if (this.sceneData.shape === "sphere") {
+      } else {
         this.surfaceAngleLabel.textContent = "方位角（°）";
         this.surfaceSecondaryLabel.textContent = "纬度（°）";
         this.pointSurfaceHint.textContent = "纬度范围 -90 到 90；正纬度位于北半球";
-      } else {
-        this.pointSurfaceHint.textContent = "当前几何体没有曲面";
       }
     }
   }
@@ -701,6 +939,7 @@ class GeometryApp {
     const selected = this.selectedEntities();
     if (selected.length !== 1) return null;
     const entity = selected[0];
+    if (entity.kind === "composite") return null;
     if (entity.kind === "point") return entity.base ? null : entity;
     return entity.auxiliary ? entity : null;
   }
@@ -751,6 +990,7 @@ class GeometryApp {
   private refreshPointEditor() {
     const previousEdge = this.pointEdgeSelect.value;
     const previousCircle = this.pointCircleSelect.value;
+    const previousSurface = this.pointSurfaceSelect.value;
     this.pointEdgeSelect.textContent = "";
     this.sceneData.edges.forEach((edge) => {
       const option = document.createElement("option");
@@ -778,6 +1018,22 @@ class GeometryApp {
       this.sceneData.curves.some((curve) => curve.id === previousCircle)
     ) {
       this.pointCircleSelect.value = previousCircle;
+    }
+
+    this.pointSurfaceSelect.textContent = "";
+    this.sceneData.surfaces.forEach((surface) => {
+      const option = document.createElement("option");
+      option.value = surface.id;
+      option.textContent = surface.label;
+      this.pointSurfaceSelect.appendChild(option);
+    });
+    if (
+      previousSurface &&
+      this.sceneData.surfaces.some(
+        (surface) => surface.id === previousSurface
+      )
+    ) {
+      this.pointSurfaceSelect.value = previousSurface;
     }
 
     const circleOption = this.pointMode.querySelector<HTMLOptionElement>(
@@ -893,18 +1149,26 @@ class GeometryApp {
     }
 
     if (mode === "surface") {
-      const surface = this.sceneData.surfaces[0];
+      const surface = findSurface(
+        this.sceneData,
+        this.pointSurfaceSelect.value
+      );
       const angle = Number(this.pointSurfaceAngle.value);
       const secondary = Number(this.pointSurfaceSecondary.value);
       if (!surface || !Number.isFinite(angle) || !Number.isFinite(secondary)) {
         this.showToolError("请输入有效的曲面定位参数");
         return;
       }
-      if (this.sceneData.shape === "cylinder") {
-        const position = cylinderSurfacePoint(this.sceneData, angle, secondary);
+      if (surface.surfaceType === "cylinder") {
+        const position = cylinderSurfacePoint(
+          this.sceneData,
+          angle,
+          secondary,
+          surface
+        );
         if (!position) {
           this.showToolError(
-            `高度必须位于 0 到 ${round(this.sceneData.params.height)} 之间`
+            `高度必须位于 0 到 ${round(surface.height || 0)} 之间`
           );
           return;
         }
@@ -920,13 +1184,15 @@ class GeometryApp {
         );
         return;
       }
-      if (this.sceneData.shape === "cone") {
-        const position = coneSurfacePoint(this.sceneData, angle, secondary);
+      if (surface.surfaceType === "cone") {
+        const position = coneSurfacePoint(
+          this.sceneData,
+          angle,
+          secondary,
+          surface
+        );
         if (!position) {
-          const length = Math.hypot(
-            this.sceneData.params.radius,
-            this.sceneData.params.height
-          );
+          const length = Math.hypot(surface.radius, surface.height || 0);
           this.showToolError(`距顶点距离必须位于 0 到 ${round(length)} 之间`);
           return;
         }
@@ -942,8 +1208,13 @@ class GeometryApp {
         );
         return;
       }
-      if (this.sceneData.shape === "sphere") {
-        const position = sphereSurfacePoint(this.sceneData, angle, secondary);
+      if (surface.surfaceType === "sphere") {
+        const position = sphereSurfacePoint(
+          this.sceneData,
+          angle,
+          secondary,
+          surface
+        );
         if (!position) {
           this.showToolError("纬度必须位于 -90° 到 90° 之间");
           return;
@@ -1116,6 +1387,10 @@ class GeometryApp {
     }
 
     if (this.activeTool === "delete") {
+      if (entity.kind === "composite") {
+        this.showToolError("组合关系由父几何体和模板共同维护，不能单独删除");
+        return;
+      }
       if (!entity.auxiliary) {
         this.showToolError("基础体对象不能删除，请重新生成几何体");
         return;
@@ -1223,7 +1498,8 @@ class GeometryApp {
       this.activeTool === "midpoint" ||
       this.activeTool === "measure-length" ||
       this.activeTool === "measure-angle" ||
-      this.activeTool === "plane"
+      this.activeTool === "plane" ||
+      this.activeTool === "section"
     ) {
       return "point";
     }
@@ -1255,6 +1531,7 @@ class GeometryApp {
       (this.activeTool === "perpendicular" && this.toolPicks.length === 2) ||
       (this.activeTool === "parallel" && this.toolPicks.length === 2) ||
       (this.activeTool === "plane" && this.toolPicks.length === 4) ||
+      (this.activeTool === "section" && this.toolPicks.length === 3) ||
       (this.activeTool === "intersection" && this.toolPicks.length === 2)
     );
   }
@@ -1288,6 +1565,10 @@ class GeometryApp {
         if (this.toolPicks.length === 3) {
           return "已选择 3 个点，可点击第 4 个点，或点击“完成三点平面”";
         }
+        return `已选择 ${this.toolPicks.length} 个点，还需要 ${
+          3 - this.toolPicks.length
+        } 个`;
+      case "section":
         return `已选择 ${this.toolPicks.length} 个点，还需要 ${
           3 - this.toolPicks.length
         } 个`;
@@ -1664,6 +1945,89 @@ class GeometryApp {
         },
         `已过点 ${target.label} 作平行线`
       );
+    } else if (this.activeTool === "section") {
+      const [a, b, c] = picks as PointEntity[];
+      const rawNormal = cross(
+        subtract(b.pos, a.pos),
+        subtract(c.pos, a.pos)
+      );
+      const normal = normalize(rawNormal);
+      if (Math.hypot(...normal) < 1e-6) {
+        this.showToolError("三个点共线，无法确定截面");
+        return;
+      }
+      const sectionPositions = sectionPolygonPoints(
+        this.sceneData,
+        a.pos,
+        normal
+      );
+      const sphereSections = this.sceneData.surfaces
+        .filter(
+          (surface) =>
+            surface.surfaceType === "sphere" &&
+            (surface.role === "child" || this.sceneData.shape === "sphere")
+        )
+        .map((surface) => ({
+          surface,
+          section: spherePlaneSection(surface, a.pos, normal)
+        }))
+        .filter(
+          (
+            item
+          ): item is {
+            surface: SurfaceEntity;
+            section: NonNullable<
+              ReturnType<typeof spherePlaneSection>
+            >;
+          } => Boolean(item.section)
+        );
+      if (sectionPositions.length < 3 && !sphereSections.length) {
+        this.showToolError(
+          "当前第一版截面支持多面体和球形曲面；圆柱、圆锥截面将在下一版加入"
+        );
+        return;
+      }
+      const sectionLabel = `截面 ${a.label}${b.label}${c.label}`;
+      this.mutate(
+        (draft) => {
+          const sectionPointIds = sectionPositions.map((position) => {
+            const existing = draft.points.find(
+              (point) => distance(point.pos, position) < 1e-5
+            );
+            return (
+              existing || makeAuxPoint(draft, position, "")
+            ).id;
+          });
+          if (sectionPointIds.length >= 3) {
+            selectCreatedId = makeAuxFace(
+              draft,
+              sectionPointIds,
+              sectionLabel
+            ).id;
+          }
+          sphereSections.forEach(({ surface, section }) => {
+            if (section.radius < 1e-5) {
+              makeAuxPoint(draft, section.center, "球切点");
+              return;
+            }
+            draft.curves.push({
+              kind: "curve",
+              id: `C_SEC_${draft.nextId++}`,
+              curveType: "circle",
+              center: section.center,
+              normal: section.normal,
+              radius: section.radius,
+              label: `${surface.label}截面圆`,
+              visible: true,
+              auxiliary: true,
+              color: "#dc2626"
+            });
+          });
+        },
+        `已生成${sectionLabel}`
+      );
+      switchToSelect = true;
+      completionMessage = `已生成${sectionLabel}`;
     } else if (this.activeTool === "plane") {
       const planePicks = picks as PointEntity[];
       if (!arePointsCoplanar(planePicks.map((point) => point.pos))) {
@@ -1783,7 +2147,7 @@ class GeometryApp {
       this.selectionDetails.innerHTML = selected
         .map(
           (entity) =>
-            `<div><dt>${entity.kind === "point" ? "点" : entity.kind === "edge" ? "棱" : entity.kind === "face" ? "面" : entity.kind === "curve" ? "圆" : "曲面"}</dt><dd>${entityDisplayName(this.sceneData, entity)}</dd></div>`
+            `<div><dt>${entity.kind === "point" ? "点" : entity.kind === "edge" ? "棱" : entity.kind === "face" ? "面" : entity.kind === "curve" ? "圆" : entity.kind === "surface" ? "曲面" : "组合"}</dt><dd>${entityDisplayName(this.sceneData, entity)}</dd></div>`
         )
         .join("");
       return;
@@ -1878,10 +2242,23 @@ class GeometryApp {
       rows.push(["半径", round(entity.radius)]);
       rows.push(["周长", round(Math.PI * 2 * entity.radius, 4)]);
       rows.push(["类型", "基础圆"]);
-    } else {
+    } else if (entity.kind === "surface") {
       rows.push(["曲面", entity.label]);
-      rows.push(["类型", "基础曲面"]);
-      rows.push(["几何体", SHAPES[this.sceneData.shape].label]);
+      rows.push(["半径", round(entity.radius)]);
+      rows.push(["球心/轴心", formatPoint(entity.center)]);
+      rows.push([
+        "类型",
+        entity.role === "child" ? "组合派生曲面" : "基础曲面"
+      ]);
+    } else {
+      rows.push(["关系", entity.description]);
+      rows.push(["父几何体", COMPOSITE_HOSTS[entity.hostShape].label]);
+      rows.push(["球心", formatPoint(entity.sphereCenter)]);
+      rows.push(["球半径", round(entity.sphereRadius, 4)]);
+      rows.push(["接触点数", String(entity.contactPointIds.length)]);
+      entity.metrics.slice(0, 3).forEach((item) => {
+        rows.push([item.label, `${round(item.value, 4)}${item.suffix || ""}`]);
+      });
     }
     this.selectionDetails.innerHTML = rows
       .map(
@@ -1900,7 +2277,8 @@ class GeometryApp {
           findEdge(this.sceneData, id) ||
           findFace(this.sceneData, id) ||
           findCurve(this.sceneData, id) ||
-          findSurface(this.sceneData, id)
+          findSurface(this.sceneData, id) ||
+          findComposite(this.sceneData, id)
       )
       .filter((item): item is GeometryEntity => Boolean(item));
   }
@@ -1915,6 +2293,7 @@ class GeometryApp {
         title: "点",
         entities: this.sceneData.points.filter((item) => !item.internal)
       },
+      { title: "组合", entities: this.sceneData.composites || [] },
       { title: "线", entities: this.sceneData.edges },
       { title: "面", entities: this.sceneData.faces },
       { title: "圆", entities: this.sceneData.curves },
@@ -1934,31 +2313,35 @@ class GeometryApp {
         row.tabIndex = 0;
         row.setAttribute("role", "button");
         row.classList.toggle("selected", this.selectedIds.has(entity.id));
-        row.classList.toggle("hidden", !entity.visible);
+        if (entity.kind !== "composite") {
+          row.classList.toggle("hidden", !entity.visible);
+        }
 
         const dot = document.createElement("span");
         dot.className = `object-dot ${entity.kind}`;
-        if (entity.color) {
+        if (entity.kind !== "composite" && entity.color) {
           dot.style.backgroundColor = entity.color;
         }
         const name = document.createElement("span");
         name.className = "object-name";
         name.textContent = entityDisplayName(this.sceneData, entity);
-        const eye = document.createElement("button");
-        eye.type = "button";
-        eye.className = "eye-btn";
-        eye.title = entity.visible ? "隐藏" : "显示";
-        eye.innerHTML = icon(entity.visible ? "eye" : "eye-off");
-        eye.addEventListener("click", (event) => {
-          event.stopPropagation();
-          this.history.push(cloneScene(this.sceneData));
-          entity.visible = !entity.visible;
-          this.future = [];
-          this.persist();
-          this.refreshAll();
-        });
-
-        row.append(dot, name, eye);
+        row.append(dot, name);
+        if (entity.kind !== "composite") {
+          const eye = document.createElement("button");
+          eye.type = "button";
+          eye.className = "eye-btn";
+          eye.title = entity.visible ? "隐藏" : "显示";
+          eye.innerHTML = icon(entity.visible ? "eye" : "eye-off");
+          eye.addEventListener("click", (event) => {
+            event.stopPropagation();
+            this.history.push(cloneScene(this.sceneData));
+            entity.visible = !entity.visible;
+            this.future = [];
+            this.persist();
+            this.refreshAll();
+          });
+          row.append(eye);
+        }
         row.addEventListener("click", () => {
           this.selectedIds = new Set([entity.id]);
           this.refreshSelection();
@@ -1984,6 +2367,7 @@ class GeometryApp {
         this.sceneData.faces.length +
         this.sceneData.curves.length +
         this.sceneData.surfaces.length +
+        (this.sceneData.composites?.length || 0) +
         (this.sceneData.measurements?.length || 0)
     );
   }
@@ -2011,23 +2395,26 @@ class GeometryApp {
       value.className = "measurement-value";
       value.textContent = measurement.label;
       value.title = measurement.label;
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "measurement-remove";
-      remove.title = "删除测量结果";
-      remove.innerHTML = icon("trash-2");
-      remove.addEventListener("click", () => {
-        this.mutate(
-          (draft) => {
-            draft.measurements = (draft.measurements || []).filter(
-              (item) => item.id !== measurement.id
-            );
-          },
-          "测量结果已删除"
-        );
-        this.refreshAll();
-      });
-      row.append(dot, value, remove);
+      row.append(dot, value);
+      if (!measurement.locked) {
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "measurement-remove";
+        remove.title = "删除测量结果";
+        remove.innerHTML = icon("trash-2");
+        remove.addEventListener("click", () => {
+          this.mutate(
+            (draft) => {
+              draft.measurements = (draft.measurements || []).filter(
+                (item) => item.id !== measurement.id
+              );
+            },
+            "测量结果已删除"
+          );
+          this.refreshAll();
+        });
+        row.append(remove);
+      }
       this.measurementList.appendChild(row);
     });
   }
