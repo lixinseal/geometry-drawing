@@ -1,4 +1,7 @@
 import type {
+  CompositeEntity,
+  CompositeHostKind,
+  CompositeRelationKind,
   CurveEntity,
   EdgeEntity,
   FaceEntity,
@@ -77,6 +80,78 @@ export const SHAPES: Record<ShapeKind, ShapeDefinition> = {
     label: "球体",
     description: "球心位于坐标原点",
     fields: [{ key: "radius", label: "半径 r", defaultValue: 3 }]
+  }
+};
+
+export const COMPOSITE_HOSTS: Record<
+  CompositeHostKind,
+  { label: string; relations: CompositeRelationKind[] }
+> = {
+  cube: {
+    label: "正方体",
+    relations: [
+      "cube-face-sphere",
+      "cube-edge-sphere",
+      "cube-circumsphere"
+    ]
+  },
+  cuboid: {
+    label: "长方体",
+    relations: ["cuboid-circumsphere"]
+  },
+  cylinder: {
+    label: "圆柱",
+    relations: ["cylinder-insphere", "cylinder-circumsphere"]
+  },
+  cone: {
+    label: "圆锥",
+    relations: ["cone-insphere", "cone-circumsphere"]
+  }
+};
+
+export const COMPOSITE_RELATIONS: Record<
+  CompositeRelationKind,
+  { label: string; description: string; host: CompositeHostKind }
+> = {
+  "cube-face-sphere": {
+    label: "面切球",
+    description: "球与正方体六个面内切",
+    host: "cube"
+  },
+  "cube-edge-sphere": {
+    label: "棱切球",
+    description: "球与正方体十二条棱相切",
+    host: "cube"
+  },
+  "cube-circumsphere": {
+    label: "外接球",
+    description: "球经过正方体八个顶点",
+    host: "cube"
+  },
+  "cuboid-circumsphere": {
+    label: "外接球",
+    description: "球经过长方体八个顶点",
+    host: "cuboid"
+  },
+  "cylinder-insphere": {
+    label: "内切球",
+    description: "球与圆柱侧面和上下底面都相切",
+    host: "cylinder"
+  },
+  "cylinder-circumsphere": {
+    label: "外接球",
+    description: "球经过圆柱上下底面圆周",
+    host: "cylinder"
+  },
+  "cone-insphere": {
+    label: "内切球",
+    description: "球与圆锥底面和侧面都相切",
+    host: "cone"
+  },
+  "cone-circumsphere": {
+    label: "外接球",
+    description: "球经过圆锥顶点和底面圆周",
+    host: "cone"
   }
 };
 
@@ -207,7 +282,10 @@ function curve(
 function surface(
   id: string,
   surfaceType: SurfaceEntity["surfaceType"],
-  label: string
+  label: string,
+  center: Vec3,
+  radius: number,
+  height?: number
 ): SurfaceEntity {
   return {
     kind: "surface",
@@ -215,7 +293,11 @@ function surface(
     surfaceType,
     label,
     visible: true,
-    auxiliary: false
+    auxiliary: false,
+    center,
+    radius,
+    height,
+    role: "host"
   };
 }
 
@@ -227,7 +309,8 @@ function scene(
   edges: EdgeEntity[],
   faces: FaceEntity[],
   curves: CurveEntity[] = [],
-  surfaces: SurfaceEntity[] = []
+  surfaces: SurfaceEntity[] = [],
+  composites: CompositeEntity[] = []
 ): SceneState {
   return {
     version: 1,
@@ -239,6 +322,7 @@ function scene(
     faces,
     curves,
     surfaces,
+    composites,
     measurements: [],
     nextId: 1
   };
@@ -497,7 +581,16 @@ export function buildSolid(
         curve("C_bottom", [0, 0, 0], radius, "下底圆"),
         curve("C_top", [0, 0, height], radius, "上底圆")
       ],
-      [surface("S_cylinder", "cylinder", "圆柱侧面")]
+      [
+        surface(
+          "S_cylinder",
+          "cylinder",
+          "圆柱侧面",
+          [0, 0, height / 2],
+          radius,
+          height
+        )
+      ]
     );
   }
 
@@ -523,7 +616,16 @@ export function buildSolid(
       ],
       [],
       [curve("C_base", [0, 0, 0], radius, "底面圆")],
-      [surface("S_cone", "cone", "圆锥侧面")]
+      [
+        surface(
+          "S_cone",
+          "cone",
+          "圆锥侧面",
+          [0, 0, height / 2],
+          radius,
+          height
+        )
+      ]
     );
   }
 
@@ -549,8 +651,355 @@ export function buildSolid(
     ],
     [],
     [curve("C_equator", [0, 0, 0], radius, "赤道圆")],
-    [surface("S_sphere", "sphere", "球面")]
+    [surface("S_sphere", "sphere", "球面", [0, 0, 0], radius)]
   );
+}
+
+export interface CompositePreview {
+  hostParams: Record<string, number>;
+  sphereCenter: Vec3;
+  sphereRadius: number;
+  description: string;
+  metrics: CompositeEntity["metrics"];
+}
+
+export function compositeHostFields(
+  host: CompositeHostKind,
+  relation: CompositeRelationKind
+) {
+  const fields = SHAPES[host].fields;
+  return relation === "cylinder-insphere"
+    ? fields.filter((field) => field.key === "radius")
+    : fields;
+}
+
+function formatMetric(value: number) {
+  return Number(value.toFixed(4)).toString();
+}
+
+function solidMetrics(host: CompositeHostKind, params: Record<string, number>) {
+  if (host === "cube") {
+    const a = params.edge;
+    return { volume: a ** 3, surfaceArea: 6 * a * a };
+  }
+  if (host === "cuboid") {
+    const { length: a, width: b, height: h } = params;
+    return {
+      volume: a * b * h,
+      surfaceArea: 2 * (a * b + b * h + a * h)
+    };
+  }
+  const r = params.radius;
+  const h = params.height;
+  if (host === "cylinder") {
+    return {
+      volume: Math.PI * r * r * h,
+      surfaceArea: 2 * Math.PI * r * (r + h)
+    };
+  }
+  const l = Math.hypot(r, h);
+  return {
+    volume: (Math.PI * r * r * h) / 3,
+    surfaceArea: Math.PI * r * (r + l)
+  };
+}
+
+function metric(
+  key: string,
+  label: string,
+  value: number,
+  suffix = ""
+): CompositeEntity["metrics"][number] {
+  return { key, label, value, suffix };
+}
+
+export function previewComposite(
+  host: CompositeHostKind,
+  relation: CompositeRelationKind,
+  inputParams: Record<string, number>
+): CompositePreview {
+  if (COMPOSITE_RELATIONS[relation].host !== host) {
+    throw new Error("当前组合关系不适用于所选父几何体");
+  }
+
+  const params = { ...inputParams };
+  for (const field of compositeHostFields(host, relation)) {
+    if (!Number.isFinite(params[field.key]) || params[field.key] <= 0) {
+      throw new Error("所有父几何体参数都必须大于 0");
+    }
+  }
+
+  let sphereCenter: Vec3;
+  let sphereRadius: number;
+  let description: string;
+
+  if (host === "cube") {
+    const a = params.edge;
+    sphereCenter = [0, 0, a / 2];
+    if (relation === "cube-face-sphere") {
+      sphereRadius = a / 2;
+      description = "球心位于正方体中心，球与六个面内切";
+    } else if (relation === "cube-edge-sphere") {
+      sphereRadius = (Math.SQRT2 * a) / 2;
+      description = "球心位于正方体中心，球与十二条棱相切";
+    } else {
+      sphereRadius = (Math.sqrt(3) * a) / 2;
+      description = "球心位于正方体中心，球经过八个顶点";
+    }
+  } else if (host === "cuboid") {
+    const { length: a, width: b, height: h } = params;
+    sphereCenter = [0, 0, h / 2];
+    sphereRadius = Math.hypot(a, b, h) / 2;
+    description = "球心位于长方体中心，球经过八个顶点";
+  } else if (host === "cylinder") {
+    const radius = params.radius;
+    if (relation === "cylinder-insphere") {
+      params.height = radius * 2;
+      sphereCenter = [0, 0, radius];
+      sphereRadius = radius;
+      description = "球与圆柱侧面及上下底面都相切";
+    } else {
+      const height = params.height;
+      sphereCenter = [0, 0, height / 2];
+      sphereRadius = Math.hypot(radius, height / 2);
+      description = "球心位于圆柱中心，球经过上下底面圆周";
+    }
+  } else {
+    const radius = params.radius;
+    const height = params.height;
+    const generatrix = Math.hypot(radius, height);
+    if (relation === "cone-insphere") {
+      sphereRadius = (radius * height) / (radius + generatrix);
+      sphereCenter = [0, 0, sphereRadius];
+      description = "球与圆锥底面及侧面都相切";
+    } else {
+      sphereCenter = [0, 0, (height * height - radius * radius) / (2 * height)];
+      sphereRadius = (height * height + radius * radius) / (2 * height);
+      description = "球经过圆锥顶点和底面圆周";
+    }
+  }
+
+  const hostMetrics = solidMetrics(host, params);
+  const sphereVolume = (4 * Math.PI * sphereRadius ** 3) / 3;
+  const sphereSurfaceArea = 4 * Math.PI * sphereRadius ** 2;
+  const metrics: CompositeEntity["metrics"] = [
+    metric("sphere-radius", "球半径", sphereRadius),
+    metric("sphere-volume", "球体积", sphereVolume),
+    metric("sphere-area", "球表面积", sphereSurfaceArea),
+    metric("host-volume", "父体体积", hostMetrics.volume),
+    metric("host-area", "父体表面积", hostMetrics.surfaceArea)
+  ];
+  if (
+    relation === "cube-face-sphere" ||
+    relation === "cylinder-insphere" ||
+    relation === "cone-insphere"
+  ) {
+    metrics.push(
+      metric("remaining-volume", "剩余体积", hostMetrics.volume - sphereVolume)
+    );
+  }
+
+  return {
+    hostParams: params,
+    sphereCenter,
+    sphereRadius,
+    description,
+    metrics
+  };
+}
+
+function addCompositePoint(
+  scene: SceneState,
+  label: string,
+  pos: Vec3,
+  contact = false
+) {
+  const item: PointEntity = {
+    kind: "point",
+    id: `CP_${scene.nextId++}`,
+    label,
+    pos,
+    visible: true,
+    base: false,
+    auxiliary: true,
+    color: contact ? "#c75b20" : "#2563eb",
+    contact
+  };
+  scene.points.push(item);
+  return item;
+}
+
+export function buildCompositeSolid(
+  host: CompositeHostKind,
+  relation: CompositeRelationKind,
+  inputParams: Record<string, number>
+): SceneState {
+  const preview = previewComposite(host, relation, inputParams);
+  const sceneData = buildSolid(host, preview.hostParams);
+  const centerPoint = addCompositePoint(sceneData, "O₂", preview.sphereCenter);
+  const radiusDirection = normalize([1, 2, 3]);
+  const radiusPoint = addCompositePoint(sceneData, "R", [
+    preview.sphereCenter[0] + preview.sphereRadius * radiusDirection[0],
+    preview.sphereCenter[1] + preview.sphereRadius * radiusDirection[1],
+    preview.sphereCenter[2] + preview.sphereRadius * radiusDirection[2]
+  ]);
+  makeAuxEdge(sceneData, centerPoint.id, radiusPoint.id, {
+    dashed: true,
+    color: "#2563eb"
+  });
+
+  const sphereSurface: SurfaceEntity = {
+    kind: "surface",
+    id: "S_child_sphere",
+    surfaceType: "sphere",
+    label: "组合球面",
+    visible: true,
+    auxiliary: true,
+    center: preview.sphereCenter,
+    radius: preview.sphereRadius,
+    role: "child",
+    color: "#2563eb"
+  };
+  sceneData.surfaces.push(sphereSurface);
+  sceneData.curves.push({
+    kind: "curve",
+    id: "C_child_equator",
+    curveType: "circle",
+    center: preview.sphereCenter,
+    normal: [0, 0, 1],
+    radius: preview.sphereRadius,
+    label: "组合球赤道",
+    visible: true,
+    auxiliary: true,
+    color: "#2563eb"
+  });
+
+  const contactPointIds: string[] = [];
+  const contactCurveIds: string[] = [];
+  if (relation === "cube-face-sphere") {
+    const a = preview.hostParams.edge;
+    const z = a / 2;
+    const contacts: Array<[string, Vec3]> = [
+      ["T下", [0, 0, 0]],
+      ["T上", [0, 0, a]],
+      ["T左", [-a / 2, 0, z]],
+      ["T右", [a / 2, 0, z]],
+      ["T前", [0, -a / 2, z]],
+      ["T后", [0, a / 2, z]]
+    ];
+    contacts.forEach(([label, pos]) => {
+      contactPointIds.push(
+        addCompositePoint(sceneData, label, pos, true).id
+      );
+    });
+  } else if (relation === "cube-edge-sphere") {
+    const a = preview.hostParams.edge;
+    let index = 1;
+    sceneData.edges
+      .filter((edge) => !edge.auxiliary)
+      .forEach((edge) => {
+        const positions = getEdgePositions(sceneData, edge);
+        if (!positions) return;
+        const label = `T${index}`;
+        index += 1;
+        contactPointIds.push(
+          addCompositePoint(
+            sceneData,
+            label,
+            midpoint(positions[0], positions[1]),
+            true
+          ).id
+        );
+      });
+  } else if (
+    relation === "cube-circumsphere" ||
+    relation === "cuboid-circumsphere"
+  ) {
+    contactPointIds.push(
+      ...sceneData.points
+        .filter((item) => item.base)
+        .map((item) => item.id)
+    );
+  } else if (relation === "cylinder-insphere") {
+    contactPointIds.push(
+      ...sceneData.points.filter((item) => item.id === "O" || item.id === "O1").map((item) => item.id)
+    );
+    const contactCurve: CurveEntity = {
+      kind: "curve",
+      id: "C_cylinder_contact",
+      curveType: "circle",
+      center: preview.sphereCenter,
+      normal: [0, 0, 1],
+      radius: preview.sphereRadius,
+      label: "接触圆",
+      visible: true,
+      auxiliary: true,
+      color: "#c75b20",
+      dashed: true
+    };
+    sceneData.curves.push(contactCurve);
+    contactCurveIds.push(contactCurve.id);
+  } else if (relation === "cylinder-circumsphere") {
+    contactCurveIds.push("C_bottom", "C_top");
+  } else if (relation === "cone-insphere") {
+    contactPointIds.push("O");
+    const radius = preview.hostParams.radius;
+    const height = preview.hostParams.height;
+    const generatrix = Math.hypot(radius, height);
+    const tangentZ =
+      (height *
+        (radius * radius + height * preview.sphereRadius)) /
+      (generatrix * generatrix);
+    const tangentRadius = radius * (1 - tangentZ / height);
+    const contactCurve: CurveEntity = {
+      kind: "curve",
+      id: "C_cone_contact",
+      curveType: "circle",
+      center: [0, 0, tangentZ],
+      normal: [0, 0, 1],
+      radius: tangentRadius,
+      label: "侧面切圆",
+      visible: true,
+      auxiliary: true,
+      color: "#c75b20",
+      dashed: true
+    };
+    sceneData.curves.push(contactCurve);
+    contactCurveIds.push(contactCurve.id);
+  } else {
+    contactPointIds.push("P");
+    contactCurveIds.push("C_base");
+  }
+
+  const composite: CompositeEntity = {
+    kind: "composite",
+    id: "COMPOSITE_1",
+    hostShape: host,
+    hostParams: preview.hostParams,
+    relation,
+    label: `${COMPOSITE_HOSTS[host].label} + ${COMPOSITE_RELATIONS[relation].label}`,
+    description: preview.description,
+    sphereSurfaceId: sphereSurface.id,
+    sphereCenter: preview.sphereCenter,
+    sphereRadius: preview.sphereRadius,
+    contactPointIds,
+    contactCurveIds,
+    metrics: preview.metrics
+  };
+  sceneData.composites = [composite];
+  sceneData.title = composite.label;
+  sceneData.measurements = preview.metrics.map((item, index) => ({
+    kind: "measurement",
+    id: `MS_COMPOSITE_${index + 1}`,
+    type: "relation",
+    points: [],
+    value: item.value,
+    label: `${item.label} = ${formatMetric(item.value)}${item.suffix || ""}`,
+    visible: true,
+    color: index < 3 ? "#2563eb" : "#0f766e",
+    locked: true
+  }));
+  return sceneData;
 }
 
 export function findPoint(scene: SceneState, id: string) {
@@ -571,6 +1020,94 @@ export function findCurve(scene: SceneState, id: string) {
 
 export function findSurface(scene: SceneState, id: string) {
   return scene.surfaces.find((item) => item.id === id);
+}
+
+export function findComposite(scene: SceneState, id: string) {
+  return scene.composites?.find((item) => item.id === id);
+}
+
+export function sectionPolygonPoints(
+  scene: SceneState,
+  planePoint: Vec3,
+  normal: Vec3
+): Vec3[] {
+  const unitNormal = normalize(normal);
+  if (length(unitNormal) < EPSILON) return [];
+  const candidates: Vec3[] = [];
+  const addCandidate = (position: Vec3) => {
+    if (
+      !candidates.some(
+        (item) => distance(item, position) < 1e-5
+      )
+    ) {
+      candidates.push(position);
+    }
+  };
+
+  for (const item of scene.edges.filter((edge) => !edge.auxiliary)) {
+    const positions = getEdgePositions(scene, item);
+    if (!positions) continue;
+    const d1 = dot(subtract(positions[0], planePoint), unitNormal);
+    const d2 = dot(subtract(positions[1], planePoint), unitNormal);
+    if (Math.abs(d1) < 1e-6) addCandidate(positions[0]);
+    if (Math.abs(d2) < 1e-6) addCandidate(positions[1]);
+    if (d1 * d2 < 0) {
+      const intersection = intersectSegmentPlane(
+        positions[0],
+        positions[1],
+        planePoint,
+        unitNormal
+      );
+      if (intersection) addCandidate(intersection);
+    }
+  }
+
+  if (candidates.length < 3) return [];
+  const center = scale(
+    candidates.reduce((sum, item) => add(sum, item), [0, 0, 0] as Vec3),
+    1 / candidates.length
+  );
+  const axisU = normalize(subtract(candidates[0], center));
+  const axisV = normalize(cross(unitNormal, axisU));
+  return candidates.sort((a, b) => {
+    const relativeA = subtract(a, center);
+    const relativeB = subtract(b, center);
+    return (
+      Math.atan2(dot(relativeA, axisV), dot(relativeA, axisU)) -
+      Math.atan2(dot(relativeB, axisV), dot(relativeB, axisU))
+    );
+  });
+}
+
+export function spherePlaneSection(
+  surface: SurfaceEntity,
+  planePoint: Vec3,
+  normal: Vec3
+):
+  | {
+      center: Vec3;
+      radius: number;
+      normal: Vec3;
+    }
+  | null {
+  if (surface.surfaceType !== "sphere") return null;
+  const unitNormal = normalize(normal);
+  const signedDistance = dot(
+    subtract(surface.center, planePoint),
+    unitNormal
+  );
+  if (Math.abs(signedDistance) > surface.radius + 1e-6) return null;
+  const sectionRadius = Math.sqrt(
+    Math.max(0, surface.radius ** 2 - signedDistance ** 2)
+  );
+  return {
+    center: subtract(
+      surface.center,
+      scale(unitNormal, signedDistance)
+    ),
+    radius: sectionRadius,
+    normal: unitNormal
+  };
 }
 
 function circleBasis(normal: Vec3): [Vec3, Vec3] {
@@ -612,11 +1149,27 @@ export function getCirclePositions(
 export function cylinderSurfacePoint(
   scene: SceneState,
   angleDegrees: number,
-  height: number
+  height: number,
+  surfaceEntity?: SurfaceEntity
 ): Vec3 | null {
-  if (scene.shape !== "cylinder") return null;
-  const radius = scene.params.radius;
-  const maxHeight = scene.params.height;
+  const radius =
+    surfaceEntity?.radius ??
+    (scene.shape === "cylinder" ? scene.params.radius : NaN);
+  const maxHeight =
+    surfaceEntity?.height ??
+    (scene.shape === "cylinder" ? scene.params.height : NaN);
+  const baseZ =
+    surfaceEntity?.center[2] !== undefined && Number.isFinite(maxHeight)
+      ? surfaceEntity.center[2] - maxHeight / 2
+      : 0;
+  if (
+    !Number.isFinite(radius) ||
+    !Number.isFinite(maxHeight) ||
+    radius <= 0 ||
+    maxHeight <= 0
+  ) {
+    return null;
+  }
   if (
     !Number.isFinite(angleDegrees) ||
     !Number.isFinite(height) ||
@@ -629,18 +1182,34 @@ export function cylinderSurfacePoint(
   return [
     radius * Math.cos(angle),
     radius * Math.sin(angle),
-    Math.min(maxHeight, Math.max(0, height))
+    baseZ + Math.min(maxHeight, Math.max(0, height))
   ];
 }
 
 export function coneSurfacePoint(
   scene: SceneState,
   angleDegrees: number,
-  distanceFromApex: number
+  distanceFromApex: number,
+  surfaceEntity?: SurfaceEntity
 ): Vec3 | null {
-  if (scene.shape !== "cone") return null;
-  const radius = scene.params.radius;
-  const height = scene.params.height;
+  const radius =
+    surfaceEntity?.radius ??
+    (scene.shape === "cone" ? scene.params.radius : NaN);
+  const height =
+    surfaceEntity?.height ??
+    (scene.shape === "cone" ? scene.params.height : NaN);
+  const baseZ =
+    surfaceEntity?.center[2] !== undefined && Number.isFinite(height)
+      ? surfaceEntity.center[2] - height / 2
+      : 0;
+  if (
+    !Number.isFinite(radius) ||
+    !Number.isFinite(height) ||
+    radius <= 0 ||
+    height <= 0
+  ) {
+    return null;
+  }
   const generatrixLength = Math.hypot(radius, height);
   if (
     !Number.isFinite(angleDegrees) ||
@@ -655,16 +1224,23 @@ export function coneSurfacePoint(
   return [
     radius * ratio * Math.cos(angle),
     radius * ratio * Math.sin(angle),
-    height * ratio
+    baseZ + height * ratio
   ];
 }
 
 export function sphereSurfacePoint(
   scene: SceneState,
   azimuthDegrees: number,
-  latitudeDegrees: number
+  latitudeDegrees: number,
+  surfaceEntity?: SurfaceEntity
 ): Vec3 | null {
-  if (scene.shape !== "sphere") return null;
+  const center =
+    surfaceEntity?.center ??
+    (scene.shape === "sphere" ? ([0, 0, 0] as Vec3) : null);
+  const radius =
+    surfaceEntity?.radius ??
+    (scene.shape === "sphere" ? scene.params.radius : NaN);
+  if (!center || !Number.isFinite(radius) || radius <= 0) return null;
   if (
     !Number.isFinite(azimuthDegrees) ||
     !Number.isFinite(latitudeDegrees) ||
@@ -673,14 +1249,13 @@ export function sphereSurfacePoint(
   ) {
     return null;
   }
-  const radius = scene.params.radius;
   const azimuth = (azimuthDegrees * Math.PI) / 180;
   const latitude = (latitudeDegrees * Math.PI) / 180;
   const horizontalRadius = radius * Math.cos(latitude);
   return [
-    horizontalRadius * Math.cos(azimuth),
-    horizontalRadius * Math.sin(azimuth),
-    radius * Math.sin(latitude)
+    center[0] + horizontalRadius * Math.cos(azimuth),
+    center[1] + horizontalRadius * Math.sin(azimuth),
+    center[2] + radius * Math.sin(latitude)
   ];
 }
 
@@ -689,34 +1264,56 @@ export function projectPointToSurface(
   surfaceEntity: SurfaceEntity,
   position: Vec3
 ): Vec3 | null {
-  if (surfaceEntity.surfaceType === "cylinder" && scene.shape === "cylinder") {
-    const height = scene.params.height;
-    const angle = Math.atan2(position[1], position[0]);
+  if (surfaceEntity.surfaceType === "cylinder") {
+    const height = surfaceEntity.height;
+    if (!height) return null;
+    const baseZ = surfaceEntity.center[2] - height / 2;
+    const angle = Math.atan2(
+      position[1] - surfaceEntity.center[1],
+      position[0] - surfaceEntity.center[0]
+    );
     return cylinderSurfacePoint(
       scene,
       (angle * 180) / Math.PI,
-      Math.min(height, Math.max(0, position[2]))
+      Math.min(height, Math.max(0, position[2] - baseZ)),
+      surfaceEntity
     );
   }
-  if (surfaceEntity.surfaceType === "cone" && scene.shape === "cone") {
-    const angle = Math.atan2(position[1], position[0]);
-    const height = scene.params.height;
-    const radius = scene.params.radius;
-    const baseRadius = Math.hypot(position[0], position[1]);
+  if (surfaceEntity.surfaceType === "cone") {
+    const height = surfaceEntity.height;
+    if (!height) return null;
+    const radius = surfaceEntity.radius;
+    const baseZ = surfaceEntity.center[2] - height / 2;
+    const angle = Math.atan2(
+      position[1] - surfaceEntity.center[1],
+      position[0] - surfaceEntity.center[0]
+    );
+    const baseRadius = Math.hypot(
+      position[0] - surfaceEntity.center[0],
+      position[1] - surfaceEntity.center[1]
+    );
     const radialRatio = baseRadius / Math.max(radius, EPSILON);
-    const heightRatio = Math.max(0, Math.min(1, 1 - position[2] / height));
+    const heightRatio = Math.max(
+      0,
+      Math.min(1, 1 - (position[2] - baseZ) / height)
+    );
     const ratio = Math.min(radialRatio, heightRatio);
     const generatrixLength = Math.hypot(radius, height);
     return coneSurfacePoint(
       scene,
       (angle * 180) / Math.PI,
-      generatrixLength * (1 - ratio)
+      generatrixLength * (1 - ratio),
+      surfaceEntity
     );
   }
-  if (surfaceEntity.surfaceType === "sphere" && scene.shape === "sphere") {
-    const magnitude = length(position);
+  if (surfaceEntity.surfaceType === "sphere") {
+    const relative = subtract(position, surfaceEntity.center);
+    const magnitude = length(relative);
     if (magnitude < EPSILON) return null;
-    return scale(position, scene.params.radius / magnitude);
+    return add(
+      surfaceEntity.center,
+      scale(relative, surfaceEntity.radius / magnitude)
+    );
   }
   return null;
 }
@@ -735,6 +1332,15 @@ export function sceneBoundsPoints(scene: SceneState): Vec3[] {
     const r = scene.params.radius;
     positions.push([-r, -r, -r], [r, r, r]);
   }
+  scene.surfaces
+    .filter((item) => item.visible)
+    .forEach((item) => {
+      const r = item.radius;
+      positions.push(
+        subtract(item.center, [r, r, r]),
+        add(item.center, [r, r, r])
+      );
+    });
   return positions;
 }
 
@@ -920,6 +1526,7 @@ export function entityDisplayName(
   }
   if (entity.kind === "curve") return entity.label || "圆";
   if (entity.kind === "surface") return entity.label;
+  if (entity.kind === "composite") return entity.label;
   return entity.label || `面 ${entity.vertices.join("")}`;
 }
 
@@ -933,7 +1540,8 @@ export function removeEntityCascade(scene: SceneState, entityId: string) {
     ...scene.edges,
     ...scene.faces,
     ...scene.curves,
-    ...scene.surfaces
+    ...scene.surfaces,
+    ...(scene.composites || [])
   ].find((item) => item.id === entityId);
   if (!target) return;
 
@@ -957,6 +1565,10 @@ export function removeEntityCascade(scene: SceneState, entityId: string) {
   scene.faces = scene.faces.filter((item) => !removed.has(item.id));
   scene.curves = scene.curves.filter((item) => !removed.has(item.id));
   scene.surfaces = scene.surfaces.filter((item) => !removed.has(item.id));
+  scene.composites = (scene.composites || []).filter(
+    (item) =>
+      !removed.has(item.id) && !removed.has(item.sphereSurfaceId)
+  );
 }
 
 export function normalizeSceneData(value: unknown): SceneState | null {
@@ -982,8 +1594,47 @@ export function normalizeSceneData(value: unknown): SceneState | null {
   if (typeof shape !== "string" || !(shape in SHAPES)) return null;
   data.curves = Array.isArray(data.curves) ? data.curves : [];
   data.surfaces = Array.isArray(data.surfaces) ? data.surfaces : [];
+  data.composites = Array.isArray(data.composites) ? data.composites : [];
   data.measurements = Array.isArray(data.measurements) ? data.measurements : [];
   data.params = typeof data.params === "object" && data.params ? data.params : {};
+  const params = data.params as Record<string, number>;
+  data.surfaces = data.surfaces.map((surface) => {
+    const item = surface as Partial<SurfaceEntity>;
+    if (
+      Array.isArray(item.center) &&
+      item.center.length === 3 &&
+      Number.isFinite(item.radius)
+    ) {
+      return {
+        ...item,
+        role: item.role || "host"
+      } as SurfaceEntity;
+    }
+    if (item.surfaceType === "cylinder") {
+      return {
+        ...item,
+        center: [0, 0, params.height / 2],
+        radius: params.radius,
+        height: params.height,
+        role: "host"
+      } as SurfaceEntity;
+    }
+    if (item.surfaceType === "cone") {
+      return {
+        ...item,
+        center: [0, 0, params.height / 2],
+        radius: params.radius,
+        height: params.height,
+        role: "host"
+      } as SurfaceEntity;
+    }
+    return {
+      ...item,
+      center: [0, 0, 0],
+      radius: params.radius,
+      role: "host"
+    } as SurfaceEntity;
+  });
   data.nextId = Number.isFinite(data.nextId) ? Number(data.nextId) : 1;
   return data as SceneState;
 }
